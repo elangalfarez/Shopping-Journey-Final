@@ -19,25 +19,40 @@ const OCR_CONFIG = {
 // ===========================================
 
 const PATTERNS = {
-    // Date patterns (various formats)
-    date: [
-        /(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})/g, // DD/MM/YYYY, DD-MM-YYYY, DD.MM.YYYY
-        /(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})/g, // YYYY-MM-DD
-        /(\d{1,2})\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s*['']?(\d{2,4})?/gi,
+    // Date patterns - ordered by priority (text dates first, then numeric)
+    dateWithMonth: [
+        // Text month formats (highest priority) - "24 Oct 2025", "24 Oktober 2025"
+        /(\d{1,2})\s*(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec|januari|februari|maret|april|mei|juni|juli|agustus|september|oktober|november|desember)\s*['']?(\d{2,4})/gi,
+    ],
+    dateNumeric: [
+        /(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/g, // DD/MM/YYYY, DD-MM-YYYY (4-digit year only)
+        /(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})/g, // YYYY-MM-DD
     ],
 
     // Time patterns (various formats)
     time: [
-        /(\d{1,2})[:\.](\d{2})(?:[:\.](\d{2}))?\s*(am|pm)?/gi, // HH:MM, HH.MM, HH:MM:SS
+        /(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?/gi, // HH:MM, HH:MM:SS with colon
         /(?:jam|time|waktu)[:\s]*(\d{1,2})[:\.](\d{2})/gi, // Prefixed with "jam", "time", etc.
-        /(\d{2})(\d{2})\s*(?:wib|wita|wit)?/gi, // HHMM format
     ],
 
-    // Amount patterns (Indonesian Rupiah)
-    amount: [
-        /(?:total|grand\s*total|jumlah|amount|subtotal|sub\s*total)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
-        /(?:rp\.?|idr)[\s]*([0-9.,]+)/gi, // Rp 150.000 or IDR 150,000
-        /([0-9]{1,3}(?:[.,][0-9]{3})+)(?:\s*(?:rp|idr|rupiah))?/gi, // 150.000 or 150,000
+    // Amount patterns - for ACTUAL PAYMENT (not savings/discounts)
+    // Ordered by specificity - most specific patterns first
+    paymentAmount: [
+        // Specific payment keywords (highest priority)
+        /(?:total\s*payment|total\s*bayar|total\s*dibayar|pembayaran)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        /(?:tunai|cash|kartu|card|debit|kredit|credit|gopay|ovo|dana|shopeepay|qris)[^0-9]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        // Total sales (common on Indonesian receipts)
+        /(?:total\s*sales|total\s*penjualan)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+    ],
+    // Fallback amount patterns (lower priority)
+    generalAmount: [
+        /(?:grand\s*total|total\s*belanja|total\s*harga)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        /(?:^|\n)\s*total[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gim, // "Total" at line start
+    ],
+    // Patterns to EXCLUDE (savings, discounts)
+    excludeAmount: [
+        /(?:saving|hemat|diskon|discount|potongan|off)[:\s]*-?(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        /(?:total\s*saving|total\s*hemat|total\s*diskon)[:\s]*-?(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
     ],
 }
 
@@ -47,13 +62,45 @@ const PATTERNS = {
 
 /**
  * Extract date from OCR text
+ * Prioritizes text dates (e.g., "24 Oct 2025") over numeric dates
+ * Avoids receipt numbers that look like dates
  */
 function extractDate(text: string): string | null {
-    for (const pattern of PATTERNS.date) {
+    // First, try to find dates with month names (most reliable)
+    for (const pattern of PATTERNS.dateWithMonth) {
         const matches = text.matchAll(pattern)
         for (const match of matches) {
-            // Return the full match
             return match[0]
+        }
+    }
+
+    // Fallback to numeric dates, but be more careful
+    for (const pattern of PATTERNS.dateNumeric) {
+        const matches = text.matchAll(pattern)
+        for (const match of matches) {
+            const fullMatch = match[0]
+            // Skip if this looks like a receipt number (surrounded by more digits)
+            const matchIndex = match.index || 0
+            const before = text.slice(Math.max(0, matchIndex - 5), matchIndex)
+            const after = text.slice(matchIndex + fullMatch.length, matchIndex + fullMatch.length + 5)
+
+            // If there are digits immediately before/after, likely a receipt number
+            if (/\d$/.test(before) || /^\d/.test(after)) {
+                continue
+            }
+
+            // Validate the date components
+            const parts = fullMatch.split(/[\/\-]/).map(Number)
+            if (parts.length === 3) {
+                const [a, b, c] = parts
+                // Check if it's a valid date (basic validation)
+                if (a >= 1 && a <= 31 && b >= 1 && b <= 12) {
+                    return fullMatch
+                }
+                if (a >= 2020 && a <= 2030 && b >= 1 && b <= 12 && c >= 1 && c <= 31) {
+                    return fullMatch
+                }
+            }
         }
     }
     return null
@@ -113,28 +160,77 @@ function parseAmount(amountStr: string): number {
 }
 
 /**
+ * Extract amounts that should be EXCLUDED (savings, discounts)
+ */
+function extractExcludedAmounts(text: string): Set<number> {
+    const excluded = new Set<number>()
+
+    for (const pattern of PATTERNS.excludeAmount) {
+        const matches = text.matchAll(pattern)
+        for (const match of matches) {
+            const amountStr = match[1] || match[0]
+            const amount = parseAmount(amountStr)
+            if (amount >= 1000) {
+                excluded.add(amount)
+            }
+        }
+    }
+
+    return excluded
+}
+
+/**
  * Extract amount from OCR text
+ * Prioritizes actual payment amounts over savings/discounts
  */
 function extractAmount(text: string): number | null {
-    const amounts: number[] = []
+    // First, identify amounts to exclude (savings, discounts)
+    const excludedAmounts = extractExcludedAmounts(text)
 
-    for (const pattern of PATTERNS.amount) {
+    // Try payment-specific patterns first (highest priority)
+    for (const pattern of PATTERNS.paymentAmount) {
         const matches = text.matchAll(pattern)
         for (const match of matches) {
             const amountStr = match[1] || match[0]
             const amount = parseAmount(amountStr)
 
-            // Filter reasonable receipt amounts (1000 - 10,000,000 IDR)
-            if (amount >= 1000 && amount <= 10000000) {
-                amounts.push(amount)
+            // Filter reasonable receipt amounts and ensure it's not an excluded amount
+            if (amount >= 1000 && amount <= 50000000 && !excludedAmounts.has(amount)) {
+                return amount
             }
         }
     }
 
-    if (amounts.length === 0) return null
+    // Try general total patterns (fallback)
+    const generalAmounts: number[] = []
+    for (const pattern of PATTERNS.generalAmount) {
+        const matches = text.matchAll(pattern)
+        for (const match of matches) {
+            const amountStr = match[1] || match[0]
+            const amount = parseAmount(amountStr)
 
-    // Return the largest amount (usually the total)
-    return Math.max(...amounts)
+            // Filter reasonable amounts and exclude savings
+            if (amount >= 1000 && amount <= 50000000 && !excludedAmounts.has(amount)) {
+                generalAmounts.push(amount)
+            }
+        }
+    }
+
+    if (generalAmounts.length > 0) {
+        // For general amounts, prefer smaller totals (more likely to be actual payment)
+        // Large amounts are often pre-discount totals
+        generalAmounts.sort((a, b) => a - b)
+
+        // If there are multiple amounts, the smaller ones are more likely actual payment
+        // But filter out very small amounts that might be item prices
+        const reasonableAmounts = generalAmounts.filter(a => a >= 100000)
+        if (reasonableAmounts.length > 0) {
+            return reasonableAmounts[0] // Return smallest reasonable amount
+        }
+        return generalAmounts[0]
+    }
+
+    return null
 }
 
 /**
