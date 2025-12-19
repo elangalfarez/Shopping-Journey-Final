@@ -1,5 +1,6 @@
 // lib/ocr.ts
 // Created: OCR service using Tesseract.js for receipt text extraction
+// Enhanced with advanced preprocessing and fuzzy number matching
 
 import Tesseract from 'tesseract.js'
 import type { ReceiptOCRData } from './types'
@@ -13,6 +14,27 @@ const OCR_CONFIG = {
     workerPath: 'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
     corePath: 'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core.wasm.js',
 }
+
+// ===========================================
+// CHARACTER CORRECTION MAPS (Fuzzy Matching)
+// ===========================================
+
+// Common OCR mistakes in numeric contexts
+const NUMERIC_CORRECTIONS: Record<string, string> = {
+    'O': '0', 'o': '0', 'Q': '0',
+    'l': '1', 'I': '1', 'i': '1', '|': '1', '!': '1',
+    'Z': '2', 'z': '2',
+    'E': '3',
+    'A': '4', 'h': '4',
+    'S': '5', 's': '5',
+    'G': '6', 'b': '6',
+    'T': '7',
+    'B': '8',
+    'g': '9', 'q': '9',
+}
+
+// Characters that commonly appear as noise in OCR
+const NOISE_CHARS = /[`~@#$%^&*_=+\\|<>{}[\]]/g
 
 // ===========================================
 // TEXT EXTRACTION PATTERNS
@@ -54,6 +76,62 @@ const PATTERNS = {
         /(?:saving|hemat|diskon|discount|potongan|off)[:\s]*-?(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
         /(?:total\s*saving|total\s*hemat|total\s*diskon)[:\s]*-?(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
     ],
+}
+
+// ===========================================
+// TEXT CORRECTION FUNCTIONS
+// ===========================================
+
+/**
+ * Fix common OCR mistakes in numeric strings
+ * e.g., "1O.OOO" -> "10.000", "2,S00" -> "2,500"
+ */
+function fixNumericOCRErrors(text: string): string {
+    // Only apply corrections to segments that look like numbers
+    return text.replace(/[\d\s.,OolIiBbSsGgZzEATQqh|!]+/g, (match) => {
+        // If it contains at least one digit, try to fix it
+        if (/\d/.test(match)) {
+            let fixed = ''
+            for (const char of match) {
+                if (NUMERIC_CORRECTIONS[char] && /\d/.test(match)) {
+                    fixed += NUMERIC_CORRECTIONS[char]
+                } else {
+                    fixed += char
+                }
+            }
+            return fixed
+        }
+        return match
+    })
+}
+
+/**
+ * Clean and normalize OCR text
+ * Removes noise, normalizes whitespace, fixes common issues
+ */
+function cleanOCRText(text: string): string {
+    let cleaned = text
+
+    // Remove noise characters
+    cleaned = cleaned.replace(NOISE_CHARS, ' ')
+
+    // Fix common OCR word errors
+    cleaned = cleaned
+        .replace(/tota[l1]/gi, 'total')
+        .replace(/sa[l1]es/gi, 'sales')
+        .replace(/payment/gi, 'payment')
+        .replace(/sav[i1]ng/gi, 'saving')
+        .replace(/d[i1]skon/gi, 'diskon')
+        .replace(/tunai/gi, 'tunai')
+
+    // Normalize multiple spaces/newlines
+    cleaned = cleaned.replace(/[ \t]+/g, ' ')
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n')
+
+    // Fix numbers with OCR errors
+    cleaned = fixNumericOCRErrors(cleaned)
+
+    return cleaned.trim()
 }
 
 // ===========================================
@@ -273,16 +351,19 @@ export async function extractReceiptData(
 
         const rawText = result.data.text
 
-        // Extract structured data
-        const date = extractDate(rawText)
-        const time = extractTime(rawText)
-        const amount = extractAmount(rawText)
+        // Clean and normalize the OCR text for better extraction
+        const cleanedText = cleanOCRText(rawText)
+
+        // Extract structured data from cleaned text
+        const date = extractDate(cleanedText)
+        const time = extractTime(cleanedText)
+        const amount = extractAmount(cleanedText)
 
         const data: Omit<ReceiptOCRData, 'confidence'> = {
             date,
             time,
             amount,
-            rawText,
+            rawText, // Keep original for debugging
         }
 
         return {
@@ -303,7 +384,7 @@ export async function extractReceiptData(
 
 /**
  * Pre-process image for better OCR results
- * Returns a canvas element or data URL
+ * Applies: grayscale, contrast enhancement, adaptive thresholding, noise reduction
  */
 export async function preprocessImage(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -322,12 +403,18 @@ export async function preprocessImage(file: File): Promise<string> {
                     return
                 }
 
-                // Set canvas size (max 2000px for performance)
-                const maxSize = 2000
+                // Set canvas size (max 2500px for better quality)
+                const maxSize = 2500
                 let width = img.width
                 let height = img.height
 
-                if (width > maxSize || height > maxSize) {
+                // Upscale small images for better OCR
+                const minSize = 1000
+                if (width < minSize && height < minSize) {
+                    const scale = minSize / Math.max(width, height)
+                    width = Math.round(width * scale)
+                    height = Math.round(height * scale)
+                } else if (width > maxSize || height > maxSize) {
                     const ratio = Math.min(maxSize / width, maxSize / height)
                     width = Math.round(width * ratio)
                     height = Math.round(height * ratio)
@@ -336,25 +423,122 @@ export async function preprocessImage(file: File): Promise<string> {
                 canvas.width = width
                 canvas.height = height
 
-                // Draw image
+                // Draw image with smoothing disabled for sharper text
+                ctx.imageSmoothingEnabled = false
                 ctx.drawImage(img, 0, 0, width, height)
 
-                // Apply slight contrast enhancement
+                // Get image data for processing
                 const imageData = ctx.getImageData(0, 0, width, height)
                 const data = imageData.data
 
-                // Simple contrast adjustment
-                const factor = 1.2
+                // Step 1: Convert to grayscale using luminosity method
+                const grayscale = new Uint8Array(width * height)
                 for (let i = 0; i < data.length; i += 4) {
-                    data[i] = Math.min(255, Math.max(0, factor * (data[i] - 128) + 128))
-                    data[i + 1] = Math.min(255, Math.max(0, factor * (data[i + 1] - 128) + 128))
-                    data[i + 2] = Math.min(255, Math.max(0, factor * (data[i + 2] - 128) + 128))
+                    // Luminosity method: 0.299*R + 0.587*G + 0.114*B
+                    const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])
+                    grayscale[i / 4] = gray
+                }
+
+                // Step 2: Calculate histogram for adaptive processing
+                const histogram = new Array(256).fill(0)
+                for (let i = 0; i < grayscale.length; i++) {
+                    histogram[grayscale[i]]++
+                }
+
+                // Step 3: Calculate Otsu's threshold for adaptive binarization
+                const total = grayscale.length
+                let sum = 0
+                for (let i = 0; i < 256; i++) sum += i * histogram[i]
+
+                let sumB = 0
+                let wB = 0
+                let wF = 0
+                let maxVariance = 0
+                let threshold = 128
+
+                for (let i = 0; i < 256; i++) {
+                    wB += histogram[i]
+                    if (wB === 0) continue
+
+                    wF = total - wB
+                    if (wF === 0) break
+
+                    sumB += i * histogram[i]
+                    const mB = sumB / wB
+                    const mF = (sum - sumB) / wF
+                    const variance = wB * wF * (mB - mF) * (mB - mF)
+
+                    if (variance > maxVariance) {
+                        maxVariance = variance
+                        threshold = i
+                    }
+                }
+
+                // Step 4: Apply contrast enhancement and adaptive thresholding
+                // Use a softer approach to preserve gradients (better for thermal receipts)
+                const contrastFactor = 1.5
+                const brightnessOffset = 10
+
+                for (let i = 0; i < grayscale.length; i++) {
+                    let pixel = grayscale[i]
+
+                    // Enhance contrast
+                    pixel = Math.round(contrastFactor * (pixel - 128) + 128 + brightnessOffset)
+                    pixel = Math.max(0, Math.min(255, pixel))
+
+                    // Apply soft thresholding for very dark/light pixels
+                    // This helps with faded thermal paper
+                    if (pixel < threshold - 30) {
+                        pixel = Math.max(0, pixel - 20) // Darken dark pixels
+                    } else if (pixel > threshold + 30) {
+                        pixel = Math.min(255, pixel + 20) // Lighten light pixels
+                    }
+
+                    grayscale[i] = pixel
+                }
+
+                // Step 5: Simple noise reduction (3x3 median-like filter for isolated pixels)
+                const denoised = new Uint8Array(grayscale.length)
+                for (let y = 0; y < height; y++) {
+                    for (let x = 0; x < width; x++) {
+                        const idx = y * width + x
+                        if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
+                            denoised[idx] = grayscale[idx]
+                            continue
+                        }
+
+                        // Get 3x3 neighborhood
+                        const neighbors = [
+                            grayscale[(y - 1) * width + (x - 1)],
+                            grayscale[(y - 1) * width + x],
+                            grayscale[(y - 1) * width + (x + 1)],
+                            grayscale[y * width + (x - 1)],
+                            grayscale[y * width + x],
+                            grayscale[y * width + (x + 1)],
+                            grayscale[(y + 1) * width + (x - 1)],
+                            grayscale[(y + 1) * width + x],
+                            grayscale[(y + 1) * width + (x + 1)],
+                        ]
+
+                        // Sort and take median
+                        neighbors.sort((a, b) => a - b)
+                        denoised[idx] = neighbors[4]
+                    }
+                }
+
+                // Step 6: Apply processed grayscale back to image data
+                for (let i = 0; i < denoised.length; i++) {
+                    const pixel = denoised[i]
+                    data[i * 4] = pixel
+                    data[i * 4 + 1] = pixel
+                    data[i * 4 + 2] = pixel
+                    // Keep alpha as 255
                 }
 
                 ctx.putImageData(imageData, 0, 0)
 
-                // Return as data URL
-                resolve(canvas.toDataURL('image/jpeg', 0.9))
+                // Return as PNG for lossless quality
+                resolve(canvas.toDataURL('image/png'))
             }
 
             img.onerror = () => {
