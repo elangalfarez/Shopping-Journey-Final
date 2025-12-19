@@ -58,18 +58,25 @@ const PATTERNS = {
     ],
 
     // Amount patterns - for ACTUAL PAYMENT (not savings/discounts)
-    // Ordered by specificity - most specific patterns first
+    // Updated to handle format like "Total payment      :    2,879,400"
     paymentAmount: [
         // Specific payment keywords (highest priority)
-        /(?:total\s*payment|total\s*bayar|total\s*dibayar|pembayaran)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
-        /(?:tunai|cash|kartu|card|debit|kredit|credit|gopay|ovo|dana|shopeepay|qris)[^0-9]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        // Handle colon separator with flexible spacing: "keyword : amount"
+        /(?:total\s*payment|total\s*bayar|total\s*dibayar|pembayaran)\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
+        // Indonesian bank payments: CIMB, BCA, Mandiri, BNI, BRI, etc.
+        /(?:cimb|bca|mandiri|bni|bri|danamon|permata|ocbc|hsbc|maybank)[^0-9:]*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
+        // E-wallets and cards
+        /(?:tunai|cash|kartu|card|debit|kredit|credit|gopay|ovo|dana|shopeepay|qris|go-pay|linkaja)\s*[^0-9:]*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
         // Total sales (common on Indonesian receipts)
-        /(?:total\s*sales|total\s*penjualan)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        /(?:total\s*sales|total\s*penjualan)\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
     ],
     // Fallback amount patterns (lower priority)
     generalAmount: [
-        /(?:grand\s*total|total\s*belanja|total\s*harga)[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
-        /(?:^|\n)\s*total[:\s]*(?:rp\.?|idr)?[\s]*([0-9.,]+)/gim, // "Total" at line start
+        /(?:grand\s*total|total\s*belanja|total\s*harga)\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
+        // "Total" at line start with colon separator
+        /(?:^|\n)\s*total\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gim,
+        // Match amounts after colon on any line containing "total"
+        /total[^0-9\n]*[:\s]+([0-9][0-9.,]*)/gi,
     ],
     // Patterns to EXCLUDE (savings, discounts)
     excludeAmount: [
@@ -388,8 +395,44 @@ export async function extractReceiptData(
 }
 
 /**
+ * Apply unsharp mask for subtle sharpening (helps with slightly blurry images)
+ */
+function applySharpening(ctx: CanvasRenderingContext2D, width: number, height: number, amount: number = 0.3): void {
+    const imageData = ctx.getImageData(0, 0, width, height)
+    const data = imageData.data
+    const copy = new Uint8ClampedArray(data)
+
+    // Simple unsharp mask: sharpen = original + amount * (original - blur)
+    // Using a simplified 3x3 blur kernel
+    for (let y = 1; y < height - 1; y++) {
+        for (let x = 1; x < width - 1; x++) {
+            const idx = (y * width + x) * 4
+
+            for (let c = 0; c < 3; c++) { // RGB channels only
+                // Get 3x3 neighborhood average (simplified blur)
+                let blur = 0
+                for (let dy = -1; dy <= 1; dy++) {
+                    for (let dx = -1; dx <= 1; dx++) {
+                        const nidx = ((y + dy) * width + (x + dx)) * 4
+                        blur += copy[nidx + c]
+                    }
+                }
+                blur /= 9
+
+                // Apply unsharp mask
+                const original = copy[idx + c]
+                const sharpened = original + amount * (original - blur)
+                data[idx + c] = Math.max(0, Math.min(255, Math.round(sharpened)))
+            }
+        }
+    }
+
+    ctx.putImageData(imageData, 0, 0)
+}
+
+/**
  * Pre-process image for better OCR results
- * LIGHT preprocessing - just resize and slight contrast boost
+ * Features: upscaling for small images, sharpening, contrast enhancement
  * Keeps color info which helps with colored receipts (pink, etc)
  */
 export async function preprocessImage(file: File): Promise<string> {
@@ -409,11 +452,28 @@ export async function preprocessImage(file: File): Promise<string> {
                     return
                 }
 
-                // Set canvas size (max 2000px for balance of quality and performance)
-                const maxSize = 2000
                 let width = img.width
                 let height = img.height
 
+                // Determine if upscaling is needed based on image size
+                // Small images (< 1500px on longest side) benefit from 2x upscaling
+                const longestSide = Math.max(width, height)
+                const needsUpscale = longestSide < 1500
+                const upscaleFactor = needsUpscale ? 2 : 1
+
+                // Also check file size - small files likely need upscaling
+                const fileSizeKB = file.size / 1024
+                const smallFile = fileSizeKB < 200 // Files under 200KB
+
+                // Apply upscaling for small images/files
+                if (needsUpscale || smallFile) {
+                    width = Math.round(width * upscaleFactor)
+                    height = Math.round(height * upscaleFactor)
+                    console.log(`Upscaling image ${upscaleFactor}x for better OCR (original: ${img.width}x${img.height}, file: ${Math.round(fileSizeKB)}KB)`)
+                }
+
+                // Cap at reasonable max size for performance
+                const maxSize = 3000
                 if (width > maxSize || height > maxSize) {
                     const ratio = Math.min(maxSize / width, maxSize / height)
                     width = Math.round(width * ratio)
@@ -423,15 +483,24 @@ export async function preprocessImage(file: File): Promise<string> {
                 canvas.width = width
                 canvas.height = height
 
-                // Draw image
+                // Draw image with high-quality scaling
+                ctx.imageSmoothingEnabled = true
+                ctx.imageSmoothingQuality = 'high'
                 ctx.drawImage(img, 0, 0, width, height)
 
-                // Get image data for LIGHT processing only
+                // Apply sharpening for upscaled/blurry images
+                if (needsUpscale || smallFile) {
+                    applySharpening(ctx, width, height, 0.4) // Stronger sharpening for upscaled
+                } else {
+                    applySharpening(ctx, width, height, 0.2) // Light sharpening for all
+                }
+
+                // Get image data for contrast enhancement
                 const imageData = ctx.getImageData(0, 0, width, height)
                 const data = imageData.data
 
-                // Light contrast enhancement only (preserves color)
-                const contrastFactor = 1.2
+                // Contrast enhancement (preserves color)
+                const contrastFactor = 1.3 // Slightly stronger
                 for (let i = 0; i < data.length; i += 4) {
                     data[i] = Math.min(255, Math.max(0, contrastFactor * (data[i] - 128) + 128))
                     data[i + 1] = Math.min(255, Math.max(0, contrastFactor * (data[i + 1] - 128) + 128))
@@ -440,8 +509,8 @@ export async function preprocessImage(file: File): Promise<string> {
 
                 ctx.putImageData(imageData, 0, 0)
 
-                // Return as JPEG for smaller size
-                resolve(canvas.toDataURL('image/jpeg', 0.9))
+                // Return as PNG for better quality (important for upscaled images)
+                resolve(canvas.toDataURL('image/png'))
             }
 
             img.onerror = () => {
