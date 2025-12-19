@@ -61,22 +61,22 @@ const PATTERNS = {
     // Updated to handle format like "Total payment      :    2,879,400"
     paymentAmount: [
         // Specific payment keywords (highest priority)
-        // Handle colon separator with flexible spacing: "keyword : amount"
-        /(?:total\s*payment|total\s*bayar|total\s*dibayar|pembayaran)\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
-        // Indonesian bank payments: CIMB, BCA, Mandiri, BNI, BRI, etc.
-        /(?:cimb|bca|mandiri|bni|bri|danamon|permata|ocbc|hsbc|maybank)[^0-9:]*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
-        // E-wallets and cards
-        /(?:tunai|cash|kartu|card|debit|kredit|credit|gopay|ovo|dana|shopeepay|qris|go-pay|linkaja)\s*[^0-9:]*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
+        // Allow OCR errors: tota1, payrnent, etc. Use flexible spacing
+        /(?:tota[l1i]\s*pay[mw]ent|tota[l1i]\s*bayar|tota[l1i]\s*dibayar|pembayaran)[^0-9\n]*?:?\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]+)/gi,
+        // Indonesian bank payments - allow anything between bank name and colon
+        /(?:c[i1l]mb|bca|mand[i1l]r[i1l]|bn[i1l]|br[i1l]|danamon|permata|ocbc|hsbc|maybank)[^\n]*?:\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]+)/gi,
+        // E-wallets and cards - more lenient
+        /(?:tuna[i1l]|cash|kartu|card|deb[i1l]t|kred[i1l]t|cred[i1l]t|gopay|ovo|dana|shopeepay|qr[i1l]s|go-pay|l[i1l]nkaja)[^\n]*?:\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]+)/gi,
         // Total sales (common on Indonesian receipts)
-        /(?:total\s*sales|total\s*penjualan)\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
+        /(?:tota[l1i]\s*sa[l1i]es|tota[l1i]\s*penjua[l1i]an)[^0-9\n]*?:?\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]+)/gi,
     ],
     // Fallback amount patterns (lower priority)
     generalAmount: [
-        /(?:grand\s*total|total\s*belanja|total\s*harga)\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gi,
+        /(?:grand\s*tota[l1i]|tota[l1i]\s*be[l1i]anja|tota[l1i]\s*harga)[^0-9\n]*?:?\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]+)/gi,
         // "Total" at line start with colon separator
-        /(?:^|\n)\s*total\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]*)/gim,
-        // Match amounts after colon on any line containing "total"
-        /total[^0-9\n]*[:\s]+([0-9][0-9.,]*)/gi,
+        /(?:^|\n)\s*tota[l1i]\s*[:\s]+(?:rp\.?|idr)?\s*([0-9][0-9.,]+)/gim,
+        // Simple fallback: any line with colon followed by large number (>100k)
+        /:\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]*[0-9]{3})/gi,
     ],
     // Patterns to EXCLUDE (savings, discounts)
     excludeAmount: [
@@ -271,6 +271,7 @@ function extractExcludedAmounts(text: string): Set<number> {
 function extractAmount(text: string): number | null {
     // First, identify amounts to exclude (savings, discounts)
     const excludedAmounts = extractExcludedAmounts(text)
+    console.log('Excluded amounts (savings/discounts):', Array.from(excludedAmounts))
 
     // Try payment-specific patterns first (highest priority)
     for (const pattern of PATTERNS.paymentAmount) {
@@ -278,9 +279,11 @@ function extractAmount(text: string): number | null {
         for (const match of matches) {
             const amountStr = match[1] || match[0]
             const amount = parseAmount(amountStr)
+            console.log(`Payment pattern matched: "${match[0]}" -> ${amount}`)
 
             // Filter reasonable receipt amounts and ensure it's not an excluded amount
             if (amount >= 1000 && amount <= 50000000 && !excludedAmounts.has(amount)) {
+                console.log(`Returning payment amount: ${amount}`)
                 return amount
             }
         }
@@ -293,6 +296,7 @@ function extractAmount(text: string): number | null {
         for (const match of matches) {
             const amountStr = match[1] || match[0]
             const amount = parseAmount(amountStr)
+            console.log(`General pattern matched: "${match[0].substring(0, 50)}..." -> ${amount}`)
 
             // Filter reasonable amounts and exclude savings
             if (amount >= 1000 && amount <= 50000000 && !excludedAmounts.has(amount)) {
@@ -302,6 +306,7 @@ function extractAmount(text: string): number | null {
     }
 
     if (generalAmounts.length > 0) {
+        console.log('All general amounts found:', generalAmounts)
         // For general amounts, prefer smaller totals (more likely to be actual payment)
         // Large amounts are often pre-discount totals
         generalAmounts.sort((a, b) => a - b)
@@ -310,11 +315,46 @@ function extractAmount(text: string): number | null {
         // But filter out very small amounts that might be item prices
         const reasonableAmounts = generalAmounts.filter(a => a >= 100000)
         if (reasonableAmounts.length > 0) {
+            console.log(`Returning smallest reasonable amount: ${reasonableAmounts[0]}`)
             return reasonableAmounts[0] // Return smallest reasonable amount
         }
         return generalAmounts[0]
     }
 
+    // Last resort: find ALL numbers that look like money amounts (6+ digits)
+    console.log('Trying last resort amount extraction...')
+    const allAmounts: number[] = []
+    const moneyPattern = /([0-9]{1,3}(?:[.,][0-9]{3})+)/g
+    const moneyMatches = text.matchAll(moneyPattern)
+    for (const match of moneyMatches) {
+        const amount = parseAmount(match[1])
+        if (amount >= 100000 && amount <= 50000000 && !excludedAmounts.has(amount)) {
+            allAmounts.push(amount)
+        }
+    }
+
+    if (allAmounts.length > 0) {
+        // Count occurrences - amounts that appear multiple times are more likely correct
+        const countMap = new Map<number, number>()
+        for (const amt of allAmounts) {
+            countMap.set(amt, (countMap.get(amt) || 0) + 1)
+        }
+        console.log('Amount frequencies:', Object.fromEntries(countMap))
+
+        // Find amount with highest frequency, or if tied, the smallest
+        let bestAmount = allAmounts[0]
+        let bestCount = countMap.get(bestAmount) || 0
+        for (const [amt, count] of countMap) {
+            if (count > bestCount || (count === bestCount && amt < bestAmount)) {
+                bestAmount = amt
+                bestCount = count
+            }
+        }
+        console.log(`Last resort returning: ${bestAmount} (appeared ${bestCount} times)`)
+        return bestAmount
+    }
+
+    console.log('No amount found')
     return null
 }
 
