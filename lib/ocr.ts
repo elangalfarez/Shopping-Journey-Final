@@ -335,6 +335,7 @@ function calculateConfidence(data: Omit<ReceiptOCRData, 'confidence'>): number {
 
 /**
  * Extract data from receipt image using Tesseract.js
+ * Uses fallback strategy: tries cleaned text first, then raw text
  */
 export async function extractReceiptData(
     imageSource: File | Blob | string
@@ -351,13 +352,17 @@ export async function extractReceiptData(
 
         const rawText = result.data.text
 
-        // Clean and normalize the OCR text for better extraction
+        // Try extraction from raw text FIRST (more reliable)
+        let date = extractDate(rawText)
+        let time = extractTime(rawText)
+        let amount = extractAmount(rawText)
+
+        // If raw text didn't work well, try cleaned text as fallback
         const cleanedText = cleanOCRText(rawText)
 
-        // Extract structured data from cleaned text
-        const date = extractDate(cleanedText)
-        const time = extractTime(cleanedText)
-        const amount = extractAmount(cleanedText)
+        if (!date) date = extractDate(cleanedText)
+        if (!time) time = extractTime(cleanedText)
+        if (!amount) amount = extractAmount(cleanedText)
 
         const data: Omit<ReceiptOCRData, 'confidence'> = {
             date,
@@ -384,7 +389,8 @@ export async function extractReceiptData(
 
 /**
  * Pre-process image for better OCR results
- * Applies: grayscale, contrast enhancement, adaptive thresholding, noise reduction
+ * LIGHT preprocessing - just resize and slight contrast boost
+ * Keeps color info which helps with colored receipts (pink, etc)
  */
 export async function preprocessImage(file: File): Promise<string> {
     return new Promise((resolve, reject) => {
@@ -403,18 +409,12 @@ export async function preprocessImage(file: File): Promise<string> {
                     return
                 }
 
-                // Set canvas size (max 2500px for better quality)
-                const maxSize = 2500
+                // Set canvas size (max 2000px for balance of quality and performance)
+                const maxSize = 2000
                 let width = img.width
                 let height = img.height
 
-                // Upscale small images for better OCR
-                const minSize = 1000
-                if (width < minSize && height < minSize) {
-                    const scale = minSize / Math.max(width, height)
-                    width = Math.round(width * scale)
-                    height = Math.round(height * scale)
-                } else if (width > maxSize || height > maxSize) {
+                if (width > maxSize || height > maxSize) {
                     const ratio = Math.min(maxSize / width, maxSize / height)
                     width = Math.round(width * ratio)
                     height = Math.round(height * ratio)
@@ -423,122 +423,25 @@ export async function preprocessImage(file: File): Promise<string> {
                 canvas.width = width
                 canvas.height = height
 
-                // Draw image with smoothing disabled for sharper text
-                ctx.imageSmoothingEnabled = false
+                // Draw image
                 ctx.drawImage(img, 0, 0, width, height)
 
-                // Get image data for processing
+                // Get image data for LIGHT processing only
                 const imageData = ctx.getImageData(0, 0, width, height)
                 const data = imageData.data
 
-                // Step 1: Convert to grayscale using luminosity method
-                const grayscale = new Uint8Array(width * height)
+                // Light contrast enhancement only (preserves color)
+                const contrastFactor = 1.2
                 for (let i = 0; i < data.length; i += 4) {
-                    // Luminosity method: 0.299*R + 0.587*G + 0.114*B
-                    const gray = Math.round(0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2])
-                    grayscale[i / 4] = gray
-                }
-
-                // Step 2: Calculate histogram for adaptive processing
-                const histogram = new Array(256).fill(0)
-                for (let i = 0; i < grayscale.length; i++) {
-                    histogram[grayscale[i]]++
-                }
-
-                // Step 3: Calculate Otsu's threshold for adaptive binarization
-                const total = grayscale.length
-                let sum = 0
-                for (let i = 0; i < 256; i++) sum += i * histogram[i]
-
-                let sumB = 0
-                let wB = 0
-                let wF = 0
-                let maxVariance = 0
-                let threshold = 128
-
-                for (let i = 0; i < 256; i++) {
-                    wB += histogram[i]
-                    if (wB === 0) continue
-
-                    wF = total - wB
-                    if (wF === 0) break
-
-                    sumB += i * histogram[i]
-                    const mB = sumB / wB
-                    const mF = (sum - sumB) / wF
-                    const variance = wB * wF * (mB - mF) * (mB - mF)
-
-                    if (variance > maxVariance) {
-                        maxVariance = variance
-                        threshold = i
-                    }
-                }
-
-                // Step 4: Apply contrast enhancement and adaptive thresholding
-                // Use a softer approach to preserve gradients (better for thermal receipts)
-                const contrastFactor = 1.5
-                const brightnessOffset = 10
-
-                for (let i = 0; i < grayscale.length; i++) {
-                    let pixel = grayscale[i]
-
-                    // Enhance contrast
-                    pixel = Math.round(contrastFactor * (pixel - 128) + 128 + brightnessOffset)
-                    pixel = Math.max(0, Math.min(255, pixel))
-
-                    // Apply soft thresholding for very dark/light pixels
-                    // This helps with faded thermal paper
-                    if (pixel < threshold - 30) {
-                        pixel = Math.max(0, pixel - 20) // Darken dark pixels
-                    } else if (pixel > threshold + 30) {
-                        pixel = Math.min(255, pixel + 20) // Lighten light pixels
-                    }
-
-                    grayscale[i] = pixel
-                }
-
-                // Step 5: Simple noise reduction (3x3 median-like filter for isolated pixels)
-                const denoised = new Uint8Array(grayscale.length)
-                for (let y = 0; y < height; y++) {
-                    for (let x = 0; x < width; x++) {
-                        const idx = y * width + x
-                        if (x === 0 || x === width - 1 || y === 0 || y === height - 1) {
-                            denoised[idx] = grayscale[idx]
-                            continue
-                        }
-
-                        // Get 3x3 neighborhood
-                        const neighbors = [
-                            grayscale[(y - 1) * width + (x - 1)],
-                            grayscale[(y - 1) * width + x],
-                            grayscale[(y - 1) * width + (x + 1)],
-                            grayscale[y * width + (x - 1)],
-                            grayscale[y * width + x],
-                            grayscale[y * width + (x + 1)],
-                            grayscale[(y + 1) * width + (x - 1)],
-                            grayscale[(y + 1) * width + x],
-                            grayscale[(y + 1) * width + (x + 1)],
-                        ]
-
-                        // Sort and take median
-                        neighbors.sort((a, b) => a - b)
-                        denoised[idx] = neighbors[4]
-                    }
-                }
-
-                // Step 6: Apply processed grayscale back to image data
-                for (let i = 0; i < denoised.length; i++) {
-                    const pixel = denoised[i]
-                    data[i * 4] = pixel
-                    data[i * 4 + 1] = pixel
-                    data[i * 4 + 2] = pixel
-                    // Keep alpha as 255
+                    data[i] = Math.min(255, Math.max(0, contrastFactor * (data[i] - 128) + 128))
+                    data[i + 1] = Math.min(255, Math.max(0, contrastFactor * (data[i + 1] - 128) + 128))
+                    data[i + 2] = Math.min(255, Math.max(0, contrastFactor * (data[i + 2] - 128) + 128))
                 }
 
                 ctx.putImageData(imageData, 0, 0)
 
-                // Return as PNG for lossless quality
-                resolve(canvas.toDataURL('image/png'))
+                // Return as JPEG for smaller size
+                resolve(canvas.toDataURL('image/jpeg', 0.9))
             }
 
             img.onerror = () => {
@@ -557,25 +460,47 @@ export async function preprocessImage(file: File): Promise<string> {
 }
 
 /**
- * Full receipt processing pipeline
+ * Full receipt processing pipeline with fallback
+ * Tries preprocessed image first, falls back to original if no results
  */
 export async function processReceipt(file: File): Promise<ReceiptOCRData> {
     try {
-        // Preprocess image
+        // First try with light preprocessing
         const processedImage = await preprocessImage(file)
-
-        // Extract data
         const data = await extractReceiptData(processedImage)
+
+        // If we got results, return them
+        if (data.confidence > 0) {
+            console.log('OCR succeeded with preprocessed image')
+            return data
+        }
+
+        // Fallback: try with original image (no preprocessing)
+        console.log('Preprocessed image gave 0% confidence, trying original...')
+        const originalData = await extractReceiptData(file)
+
+        // Return whichever has better results
+        if (originalData.confidence > data.confidence) {
+            console.log('Original image gave better results')
+            return originalData
+        }
 
         return data
     } catch (error) {
         console.error('Receipt processing error:', error)
-        return {
-            date: null,
-            time: null,
-            amount: null,
-            rawText: '',
-            confidence: 0,
+
+        // Last resort: try original file directly
+        try {
+            console.log('Error during preprocessing, trying original file...')
+            return await extractReceiptData(file)
+        } catch {
+            return {
+                date: null,
+                time: null,
+                amount: null,
+                rawText: '',
+                confidence: 0,
+            }
         }
     }
 }
