@@ -688,15 +688,11 @@ export default function MissionPage() {
         setOcrProgress(0)
 
         try {
-            // Simulate progress for UX
-            const progressInterval = setInterval(() => {
-                setOcrProgress((prev) => Math.min(prev + Math.random() * 15, 90))
-            }, 500)
+            // Run OCR with real progress tracking
+            const data = await processReceipt(file, (progress) => {
+                setOcrProgress(progress)
+            })
 
-            // Run OCR
-            const data = await processReceipt(file)
-
-            clearInterval(progressInterval)
             setOcrProgress(100)
 
             // Validate

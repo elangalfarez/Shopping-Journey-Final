@@ -78,10 +78,14 @@ const PATTERNS = {
         // Simple fallback: any line with colon followed by large number (>100k)
         /:\s*(?:rp\.?|idr)?\s*([0-9][0-9.,]*[0-9]{3})/gi,
     ],
-    // Patterns to EXCLUDE (savings, discounts)
+    // Patterns to EXCLUDE (savings, discounts, loyalty points, taxes)
     excludeAmount: [
         /(?:saving|hemat|diskon|discount|potongan|off)[:\s]*-?(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
         /(?:total\s*saving|total\s*hemat|total\s*diskon)[:\s]*-?(?:rp\.?|idr)?[\s]*([0-9.,]+)/gi,
+        // Loyalty points (Koin, Points, Poin, etc.)
+        /(?:ko[i1]n|po[i1]nt|po[i1]n|reward|balance|saldo)[^\n]*?[:\s]+([0-9.,]+)/gi,
+        // Tax-related (PPN, BKP, DPP)
+        /(?:ppn|bkp|jkp|dpp|pajak|tax)[^\n]*?[:\s]+([0-9.,]+)/gi,
     ],
 }
 
@@ -307,18 +311,37 @@ function extractAmount(text: string): number | null {
 
     if (generalAmounts.length > 0) {
         console.log('All general amounts found:', generalAmounts)
-        // For general amounts, prefer smaller totals (more likely to be actual payment)
-        // Large amounts are often pre-discount totals
-        generalAmounts.sort((a, b) => a - b)
 
-        // If there are multiple amounts, the smaller ones are more likely actual payment
-        // But filter out very small amounts that might be item prices
-        const reasonableAmounts = generalAmounts.filter(a => a >= 100000)
-        if (reasonableAmounts.length > 0) {
-            console.log(`Returning smallest reasonable amount: ${reasonableAmounts[0]}`)
-            return reasonableAmounts[0] // Return smallest reasonable amount
+        // Use frequency analysis - amounts that appear multiple times are more likely correct
+        // (e.g., "Total sales", "Total payment", and bank payment often show same amount)
+        const countMap = new Map<number, number>()
+        for (const amt of generalAmounts) {
+            countMap.set(amt, (countMap.get(amt) || 0) + 1)
         }
-        return generalAmounts[0]
+        console.log('Amount frequencies:', Object.fromEntries(countMap))
+
+        // Find amount with highest frequency
+        // If tied, prefer amounts in the 100k-10M range (typical receipt amounts)
+        let bestAmount = generalAmounts[0]
+        let bestCount = countMap.get(bestAmount) || 0
+        for (const [amt, count] of countMap) {
+            const isPreferredRange = amt >= 100000 && amt <= 10000000
+            const bestIsPreferredRange = bestAmount >= 100000 && bestAmount <= 10000000
+
+            if (count > bestCount) {
+                bestAmount = amt
+                bestCount = count
+            } else if (count === bestCount) {
+                // Prefer amounts in the typical receipt range
+                if (isPreferredRange && !bestIsPreferredRange) {
+                    bestAmount = amt
+                    bestCount = count
+                }
+            }
+        }
+
+        console.log(`Returning most frequent amount: ${bestAmount} (appeared ${bestCount} times)`)
+        return bestAmount
     }
 
     // Last resort: find ALL numbers that look like money amounts (6+ digits)
@@ -571,12 +594,17 @@ export async function preprocessImage(file: File): Promise<string> {
 /**
  * Full receipt processing pipeline with fallback
  * Tries preprocessed image first, falls back to original if no results
+ * @param file - The receipt image file
+ * @param onProgress - Optional callback for OCR progress (0-100)
  */
-export async function processReceipt(file: File): Promise<ReceiptOCRData> {
+export async function processReceipt(
+    file: File,
+    onProgress?: (progress: number) => void
+): Promise<ReceiptOCRData> {
     try {
         // First try with light preprocessing
         const processedImage = await preprocessImage(file)
-        const data = await extractReceiptData(processedImage)
+        const data = await extractReceiptDataWithProgress(processedImage, onProgress)
 
         // If we got results, return them
         if (data.confidence > 0) {
@@ -586,7 +614,7 @@ export async function processReceipt(file: File): Promise<ReceiptOCRData> {
 
         // Fallback: try with original image (no preprocessing)
         console.log('Preprocessed image gave 0% confidence, trying original...')
-        const originalData = await extractReceiptData(file)
+        const originalData = await extractReceiptDataWithProgress(file, onProgress)
 
         // Return whichever has better results
         if (originalData.confidence > data.confidence) {
@@ -601,7 +629,7 @@ export async function processReceipt(file: File): Promise<ReceiptOCRData> {
         // Last resort: try original file directly
         try {
             console.log('Error during preprocessing, trying original file...')
-            return await extractReceiptData(file)
+            return await extractReceiptDataWithProgress(file, onProgress)
         } catch {
             return {
                 date: null,
@@ -610,6 +638,62 @@ export async function processReceipt(file: File): Promise<ReceiptOCRData> {
                 rawText: '',
                 confidence: 0,
             }
+        }
+    }
+}
+
+/**
+ * Extract receipt data with progress callback support
+ */
+async function extractReceiptDataWithProgress(
+    imageSource: File | Blob | string,
+    onProgress?: (progress: number) => void
+): Promise<ReceiptOCRData> {
+    try {
+        // Perform OCR
+        const result = await Tesseract.recognize(imageSource, OCR_CONFIG.lang, {
+            logger: (m) => {
+                if (m.status === 'recognizing text') {
+                    const progress = Math.round(m.progress * 100)
+                    console.log(`OCR Progress: ${progress}%`)
+                    onProgress?.(progress)
+                }
+            },
+        })
+
+        const rawText = result.data.text
+
+        // Try extraction from raw text FIRST (more reliable)
+        let date = extractDate(rawText)
+        let time = extractTime(rawText)
+        let amount = extractAmount(rawText)
+
+        // If raw text didn't work well, try cleaned text as fallback
+        const cleanedText = cleanOCRText(rawText)
+
+        if (!date) date = extractDate(cleanedText)
+        if (!time) time = extractTime(cleanedText)
+        if (!amount) amount = extractAmount(cleanedText)
+
+        const data: Omit<ReceiptOCRData, 'confidence'> = {
+            date,
+            time,
+            amount,
+            rawText, // Keep original for debugging
+        }
+
+        return {
+            ...data,
+            confidence: calculateConfidence(data),
+        }
+    } catch (error) {
+        console.error('OCR error:', error)
+        return {
+            date: null,
+            time: null,
+            amount: null,
+            rawText: '',
+            confidence: 0,
         }
     }
 }
