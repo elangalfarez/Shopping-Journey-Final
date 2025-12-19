@@ -1,140 +1,277 @@
 // app/page.tsx
-// Created: Halloween-themed registration page with world-class animations and spooky decorations
+// Created: Landing page with registration flow for Shopping Journey
 
 "use client"
 
 import { useState, useEffect } from "react"
 import { useRouter } from "next/navigation"
+import { motion, AnimatePresence } from "framer-motion"
+import {
+  Gift,
+  User,
+  Phone,
+  ChevronRight,
+  ArrowLeft,
+  Check,
+  Sparkles,
+  Clock,
+  MapPin,
+  TreePine,
+  ShoppingBag,
+  Utensils,
+  Shirt,
+  AlertCircle,
+  Loader2,
+} from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
+import { Label } from "@/components/ui/label"
+import { Checkbox } from "@/components/ui/checkbox"
 import { Card, CardContent } from "@/components/ui/card"
-import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog"
-import { CheckCircle, Copy, ArrowRight, AlertCircle, Phone, RefreshCw, Trophy, User, Hash, Ghost, Skull } from "lucide-react"
-import { toast } from "@/hooks/use-toast"
-import { supabaseApi, Player } from "@/lib/supabase"
+import { Badge } from "@/components/ui/badge"
+import { useToast } from "@/components/ui/use-toast"
+import { StepProgress } from "@/components/ui/segmented-progress"
+import { QuotaDisplay } from "@/components/Header"
 
-interface RegistrationData {
-  code: string
+import { useQuota } from "@/hooks/useQuota"
+import { registerParticipant, getParticipantByPhone } from "@/lib/supabase"
+import { registrationSchema, normalizePhoneNumber } from "@/lib/validations"
+import { formatRupiah, setLocalStorage } from "@/lib/utils"
+import {
+  EVENT_CONFIG,
+  MISSION_1,
+  MISSION_2,
+  STORAGE_KEYS,
+  PAGE_ROUTES,
+  ERROR_MESSAGES,
+  SUCCESS_MESSAGES,
+} from "@/lib/constants"
+
+// ===========================================
+// TYPES
+// ===========================================
+
+interface FormData {
   name: string
   phone: string
+  acceptTerms: boolean
 }
 
-export default function HalloweenRegistrationPage() {
-  const [step, setStep] = useState(1)
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [data, setData] = useState<RegistrationData>({
-    code: "",
+type FormErrors = Partial<Record<keyof FormData | 'general', string>>
+
+type Step = 1 | 2 | 3
+
+// ===========================================
+// ANIMATION VARIANTS
+// ===========================================
+
+const fadeInUp = {
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -20 },
+}
+
+const staggerContainer = {
+  animate: {
+    transition: {
+      staggerChildren: 0.1,
+    },
+  },
+}
+
+const scaleIn = {
+  initial: { opacity: 0, scale: 0.9 },
+  animate: { opacity: 1, scale: 1 },
+  exit: { opacity: 0, scale: 0.9 },
+}
+
+// ===========================================
+// MAIN COMPONENT
+// ===========================================
+
+export default function HomePage() {
+  const router = useRouter()
+  const { toast } = useToast()
+  const { quota, loading: quotaLoading } = useQuota({ realtime: true })
+
+  // Form state
+  const [step, setStep] = useState<Step>(1)
+  const [formData, setFormData] = useState<FormData>({
     name: "",
     phone: "",
+    acceptTerms: false,
   })
-  
+  const [errors, setErrors] = useState<FormErrors>({})
+  const [loading, setLoading] = useState(false)
+
+  // Recovery mode state
   const [showRecovery, setShowRecovery] = useState(false)
   const [recoveryPhone, setRecoveryPhone] = useState("")
   const [recoveryLoading, setRecoveryLoading] = useState(false)
-  
-  const router = useRouter()
 
+  // Check for existing session on mount
   useEffect(() => {
-    const playerId = localStorage.getItem('playerId')
-    if (playerId) {
-      router.push('/dashboard')
+    const existingId = localStorage.getItem(STORAGE_KEYS.participantId)
+    if (existingId) {
+      router.push(PAGE_ROUTES.dashboard)
     }
   }, [router])
 
-  const handleCodeChange = (value: string) => {
-    const formatted = value
-      .toUpperCase()
-      .replace(/[^A-Z0-9]/g, "")
-      .slice(0, 6)
-    setData((prev) => ({ ...prev, code: formatted }))
-    setError("")
+  // ===========================================
+  // FORM HANDLERS
+  // ===========================================
+
+  const handleInputChange = (field: keyof FormData, value: string | boolean) => {
+    setFormData(prev => ({ ...prev, [field]: value }))
+    // Clear field error on change
+    if (errors[field]) {
+      setErrors(prev => ({ ...prev, [field]: undefined }))
+    }
   }
 
-  const handlePhoneChange = (value: string) => {
-    let formatted = value.replace(/[^0-9]/g, "")
-    if (formatted.startsWith("0")) {
-      formatted = formatted.slice(0, 13)
-    }
-    setData((prev) => ({ ...prev, phone: formatted }))
-    setError("")
-  }
+  const validateStep = (): boolean => {
+    const newErrors: FormErrors = {}
 
-  const validateStep = () => {
-    switch (step) {
-      case 1:
-        return data.code.length === 6
-      case 2:
-        return data.name.trim().length >= 2 && data.phone.length >= 10 && data.phone.startsWith("08")
-      case 3:
-        return true
-      default:
-        return false
+    if (step === 1) {
+      // Validate name
+      if (!formData.name.trim()) {
+        newErrors.name = ERROR_MESSAGES.nameRequired
+      } else if (formData.name.trim().length < 2) {
+        newErrors.name = ERROR_MESSAGES.nameTooShort
+      }
+
+      // Validate phone
+      if (!formData.phone.trim()) {
+        newErrors.phone = ERROR_MESSAGES.phoneRequired
+      } else {
+        const phoneDigits = formData.phone.replace(/\D/g, "")
+        if (phoneDigits.length < 10 || phoneDigits.length > 15) {
+          newErrors.phone = ERROR_MESSAGES.phoneInvalid
+        }
+      }
     }
+
+    if (step === 2) {
+      if (!formData.acceptTerms) {
+        newErrors.acceptTerms = ERROR_MESSAGES.termsRequired
+      }
+    }
+
+    setErrors(newErrors)
+    return Object.keys(newErrors).length === 0
   }
 
   const handleNext = async () => {
     if (!validateStep()) return
-    
-    setLoading(true)
-    setError("")
 
-    try {
-      if (step === 1) {
-        const result = await supabaseApi.validateSignupCode(data.code)
-        
-        if (!result.valid) {
-          setError(result.message || "Kode tidak valid")
-          setLoading(false)
-          return
-        }
-        
-        setStep(2)
-      } else if (step === 2) {
-        setStep(3)
-      } else if (step === 3) {
-        const result = await supabaseApi.registerPlayer(
-          data.code,
-          data.name.trim(),
-          data.phone
-        )
-
-        if (!result.success || !result.player) {
-          setError(result.message || "Gagal mendaftar")
-          setLoading(false)
-          return
-        }
-
-        localStorage.setItem("playerId", result.player.id.toString())
-        localStorage.setItem("playerName", result.player.name)
-        localStorage.setItem("playerPhone", result.player.phone)
-
-        toast({
-          title: "Pendaftaran Berhasil",
-          description: "Selamat datang di Treasure Hunt",
-        })
-
-        router.push("/dashboard")
-        return
-      }
-    } catch (err) {
-      console.error("Registration error:", err)
-      setError("Terjadi kesalahan. Silakan coba lagi.")
+    if (step === 1) {
+      setStep(2)
+    } else if (step === 2) {
+      await handleSubmit()
     }
-
-    setLoading(false)
   }
 
   const handleBack = () => {
-    setStep((prev) => Math.max(1, prev - 1))
-    setError("")
+    if (step > 1) {
+      setStep((prev) => (prev - 1) as Step)
+      setErrors({})
+    }
   }
 
-  const handleRecovery = async () => {
-    if (!recoveryPhone || recoveryPhone.length < 10) {
+  const handleSubmit = async () => {
+    if (!validateStep()) return
+
+    // Check quota
+    if (quota && !quota.isAvailable) {
+      toast({
+        title: "Kuota Habis",
+        description: ERROR_MESSAGES.quotaFull,
+        variant: "destructive",
+      })
+      return
+    }
+
+    setLoading(true)
+    setErrors({})
+
+    try {
+      // Validate with Zod
+      const validationResult = registrationSchema.safeParse({
+        name: formData.name,
+        phone: formData.phone,
+        acceptTerms: formData.acceptTerms,
+      })
+
+      if (!validationResult.success) {
+        const fieldErrors: FormErrors = {}
+        validationResult.error.errors.forEach((err) => {
+          const field = err.path[0] as keyof FormData
+          fieldErrors[field] = err.message
+        })
+        setErrors(fieldErrors)
+        setLoading(false)
+        return
+      }
+
+      // Register participant
+      const result = await registerParticipant({
+        phone_number: validationResult.data.phone,
+        full_name: validationResult.data.name,
+      })
+
+      if (!result.success || !result.participant) {
+        setErrors({ general: result.error || ERROR_MESSAGES.serverError })
+        toast({
+          title: "Pendaftaran Gagal",
+          description: result.error,
+          variant: "destructive",
+        })
+        setLoading(false)
+        return
+      }
+
+      // Save session
+      setLocalStorage(STORAGE_KEYS.participantId, result.participant.id)
+      setLocalStorage(STORAGE_KEYS.participantPhone, result.participant.phone_number)
+      setLocalStorage(STORAGE_KEYS.participantName, result.participant.full_name)
+
+      // Show success
+      setStep(3)
+
+      toast({
+        title: "Pendaftaran Berhasil!",
+        description: SUCCESS_MESSAGES.registration,
+        variant: "success",
+      })
+
+      // Redirect after animation
+      setTimeout(() => {
+        router.push(PAGE_ROUTES.dashboard)
+      }, 2000)
+
+    } catch (error) {
+      console.error("Registration error:", error)
+      setErrors({ general: ERROR_MESSAGES.serverError })
       toast({
         title: "Error",
-        description: "Masukkan nomor WhatsApp yang valid",
+        description: ERROR_MESSAGES.serverError,
+        variant: "destructive",
+      })
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // ===========================================
+  // RECOVERY HANDLER
+  // ===========================================
+
+  const handleRecovery = async () => {
+    if (!recoveryPhone || recoveryPhone.replace(/\D/g, "").length < 10) {
+      toast({
+        title: "Error",
+        description: ERROR_MESSAGES.phoneInvalid,
         variant: "destructive",
       })
       return
@@ -143,382 +280,506 @@ export default function HalloweenRegistrationPage() {
     setRecoveryLoading(true)
 
     try {
-      const { data: player, error } = await supabaseApi.supabase
-        .from('players')
-        .select('*')
-        .eq('phone', recoveryPhone)
-        .single()
+      const normalizedPhone = normalizePhoneNumber(recoveryPhone)
+      const participant = await getParticipantByPhone(normalizedPhone)
 
-      if (error || !player) {
+      if (!participant) {
         toast({
           title: "Tidak Ditemukan",
-          description: "Nomor tidak terdaftar",
+          description: "Nomor HP tidak terdaftar",
           variant: "destructive",
         })
         setRecoveryLoading(false)
         return
       }
 
-      localStorage.setItem("playerId", player.id.toString())
-      localStorage.setItem("playerName", player.name)
-      localStorage.setItem("playerPhone", player.phone)
+      // Save session
+      setLocalStorage(STORAGE_KEYS.participantId, participant.id)
+      setLocalStorage(STORAGE_KEYS.participantPhone, participant.phone_number)
+      setLocalStorage(STORAGE_KEYS.participantName, participant.full_name)
 
       toast({
-        title: "Progress Ditemukan",
-        description: `Selamat datang kembali, ${player.name}`,
+        title: "Selamat Datang Kembali!",
+        description: `Halo ${participant.full_name}`,
       })
 
-      router.push("/dashboard")
-    } catch (err) {
-      console.error("Recovery error:", err)
+      router.push(PAGE_ROUTES.dashboard)
+
+    } catch (error) {
+      console.error("Recovery error:", error)
       toast({
         title: "Error",
-        description: "Terjadi kesalahan. Silakan coba lagi.",
+        description: ERROR_MESSAGES.serverError,
         variant: "destructive",
       })
+    } finally {
+      setRecoveryLoading(false)
     }
-
-    setRecoveryLoading(false)
   }
 
+  // ===========================================
+  // RENDER
+  // ===========================================
+
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f1f] to-[#0a0a0f] relative overflow-hidden">
-      {/* Animated Halloween Background Elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {/* Floating Pumpkins */}
-        <div className="halloween-pumpkin pumpkin-1">
-          🎃
-        </div>
-        <div className="halloween-pumpkin pumpkin-2">
-          🎃
-        </div>
-        <div className="halloween-pumpkin pumpkin-3">
-          🎃
-        </div>
-        
-        {/* Floating Ghosts */}
-        <div className="halloween-ghost ghost-1">
-          👻
-        </div>
-        <div className="halloween-ghost ghost-2">
-          👻
-        </div>
-        
-        {/* Spooky Fog Effect */}
-        <div className="fog fog-1"></div>
-        <div className="fog fog-2"></div>
-        <div className="fog fog-3"></div>
-        
-        {/* Floating Particles */}
-        {Array.from({ length: 20 }).map((_, i) => (
-          <div
-            key={i}
-            className="halloween-particle"
-            style={{
-              left: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 5}s`,
-              animationDuration: `${8 + Math.random() * 4}s`,
-            }}
-          />
-        ))}
-        
-        {/* Spider Webs in corners */}
-        <div className="spider-web top-left"></div>
-        <div className="spider-web top-right"></div>
+    <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f0f] to-[#0a0a0f] overflow-hidden">
+      {/* Ambient background effects */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-christmas-red/10 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-christmas-green/10 rounded-full blur-[100px]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-christmas-gold/5 rounded-full blur-[80px]" />
       </div>
 
-      <div className="relative z-10 flex flex-col items-center justify-center min-h-screen px-4 py-8">
-        {/* Spooky Trophy Icon with Glow */}
-        <div className="mb-6 relative group">
-          <div className="absolute inset-0 bg-orange-500/20 blur-2xl rounded-full animate-pulse-glow"></div>
-          <div className="relative bg-gradient-to-br from-orange-600 via-orange-500 to-yellow-600 p-5 rounded-full shadow-2xl transform transition-all duration-300 hover:scale-110 hover:rotate-6">
-            <Trophy className="w-10 h-10 text-black drop-shadow-lg" />
-            <div className="absolute -top-1 -right-1 w-4 h-4 bg-red-600 rounded-full animate-ping"></div>
-          </div>
-        </div>
-
-        {/* Main Title with Spooky Effect */}
-        <h1 className="text-4xl md:text-5xl font-bold text-center mb-2 relative">
-          <span className="bg-gradient-to-r from-orange-400 via-red-500 to-orange-600 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(251,146,60,0.5)] animate-text-glow">
-            Supermal Karawaci
-          </span>
-        </h1>
-
-        {/* Subtitle with Halloween Twist */}
-        <div className="text-center mb-2 relative">
-          <p className="text-2xl md:text-3xl font-bold bg-gradient-to-r from-yellow-400 via-orange-500 to-red-600 bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(251,191,36,0.4)]">
-            🎃 Spooky Hunt 🎃
-          </p>
-        </div>
-        
-        <p className="text-text-muted text-center mb-8 max-w-md text-sm md:text-base">
-          Bergabunglah dalam petualangan seru penuh misteri dan hadiah mengerikan
-        </p>
-
-        {/* Step Indicators with Halloween Icons */}
-        <div className="flex items-center justify-center space-x-3 mb-8">
-          <div className={`flex items-center justify-center w-12 h-12 rounded-full transition-all duration-500 ${
-            step >= 1 
-              ? 'bg-gradient-to-br from-orange-500 to-red-600 shadow-lg shadow-orange-500/50 scale-110' 
-              : 'bg-gray-700/50 backdrop-blur-sm'
-          }`}>
-            <Hash className={`w-5 h-5 ${step >= 1 ? 'text-white' : 'text-gray-400'}`} />
-          </div>
-          <div className={`h-1 w-12 rounded-full transition-all duration-500 ${
-            step >= 2 ? 'bg-gradient-to-r from-orange-500 to-red-600' : 'bg-gray-700/50'
-          }`}></div>
-          <div className={`flex items-center justify-center w-12 h-12 rounded-full transition-all duration-500 ${
-            step >= 2 
-              ? 'bg-gradient-to-br from-orange-500 to-red-600 shadow-lg shadow-orange-500/50 scale-110' 
-              : 'bg-gray-700/50 backdrop-blur-sm'
-          }`}>
-            <User className={`w-5 h-5 ${step >= 2 ? 'text-white' : 'text-gray-400'}`} />
-          </div>
-          <div className={`h-1 w-12 rounded-full transition-all duration-500 ${
-            step >= 3 ? 'bg-gradient-to-r from-orange-500 to-red-600' : 'bg-gray-700/50'
-          }`}></div>
-          <div className={`flex items-center justify-center w-12 h-12 rounded-full transition-all duration-500 ${
-            step >= 3 
-              ? 'bg-gradient-to-br from-orange-500 to-red-600 shadow-lg shadow-orange-500/50 scale-110' 
-              : 'bg-gray-700/50 backdrop-blur-sm'
-          }`}>
-            <Ghost className={`w-5 h-5 ${step >= 3 ? 'text-white' : 'text-gray-400'}`} />
-          </div>
-        </div>
-
-        {/* Main Card with Glassmorphism and Depth */}
-        <Card className="w-full max-w-md backdrop-blur-xl bg-gradient-to-br from-gray-900/80 via-purple-950/40 to-gray-900/80 border-2 border-orange-500/30 shadow-2xl shadow-orange-500/20 transform transition-all duration-300 hover:shadow-orange-500/40 hover:border-orange-500/50 relative overflow-hidden group">
-          {/* Animated border glow */}
-          <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/20 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500 animate-border-glow"></div>
-          
-          {/* Spooky corner decorations */}
-          <div className="absolute top-0 left-0 w-16 h-16 opacity-20">
-            <Skull className="w-full h-full text-orange-500 -rotate-12" />
-          </div>
-          <div className="absolute bottom-0 right-0 w-16 h-16 opacity-20">
-            <Skull className="w-full h-full text-orange-500 rotate-12" />
-          </div>
-          
-          <CardContent className="p-6 md:p-8 relative z-10">
-            {/* Step Content */}
-            {step === 1 && (
-              <div className="space-y-6 animate-fade-in">
-                <div className="text-center space-y-2">
-                  <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
-                    Kode Treasure Hunt
-                  </h2>
-                  <p className="text-sm text-text-muted">
-                    Kode Treasure Hunt
-                  </p>
-                  <p className="text-xs text-text-muted/70">
-                    Dapatkan kode dari petugas di lokasi
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  <Input
-                    type="text"
-                    value={data.code}
-                    onChange={(e) => handleCodeChange(e.target.value)}
-                    placeholder="Masukkan 6 karakter kode"
-                    maxLength={6}
-                    disabled={loading}
-                    className="h-14 text-center text-lg tracking-[0.5em] font-bold uppercase bg-gray-900/50 border-2 border-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 text-white placeholder:text-gray-500 placeholder:tracking-normal transition-all duration-300 hover:border-orange-500/50"
-                  />
-                  <p className="text-xs text-center text-text-muted">
-                    {data.code.length}/6 karakter
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {step === 2 && (
-              <div className="space-y-6 animate-fade-in">
-                <div className="text-center space-y-2">
-                  <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
-                    Informasi Peserta
-                  </h2>
-                  <p className="text-sm text-text-muted">
-                    Lengkapi data diri Anda
-                  </p>
-                </div>
-
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-text-light flex items-center gap-2">
-                      <User className="w-4 h-4 text-orange-500" />
-                      Nama Lengkap
-                    </label>
-                    <Input
-                      type="text"
-                      value={data.name}
-                      onChange={(e) => setData((prev) => ({ ...prev, name: e.target.value }))}
-                      placeholder="Masukkan nama lengkap"
-                      disabled={loading}
-                      className="h-12 bg-gray-900/50 border-2 border-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 text-white placeholder:text-gray-500 transition-all duration-300 hover:border-orange-500/50"
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <label className="text-sm font-medium text-text-light flex items-center gap-2">
-                      <Phone className="w-4 h-4 text-orange-500" />
-                      Nomor WhatsApp
-                    </label>
-                    <Input
-                      type="tel"
-                      value={data.phone}
-                      onChange={(e) => handlePhoneChange(e.target.value)}
-                      placeholder="08xxxxxxxxxx"
-                      disabled={loading}
-                      className="h-12 bg-gray-900/50 border-2 border-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 text-white placeholder:text-gray-500 transition-all duration-300 hover:border-orange-500/50"
-                    />
-                    <p className="text-xs text-text-muted">
-                      Gunakan nomor aktif untuk notifikasi
-                    </p>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {step === 3 && (
-              <div className="space-y-6 animate-fade-in">
-                <div className="text-center space-y-2">
-                  <div className="flex justify-center mb-4">
-                    <div className="bg-gradient-to-br from-orange-500 to-red-600 p-4 rounded-full animate-bounce-subtle">
-                      <CheckCircle className="w-12 h-12 text-white" />
-                    </div>
-                  </div>
-                  <h2 className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
-                    Konfirmasi Data
-                  </h2>
-                  <p className="text-sm text-text-muted">
-                    Pastikan data Anda sudah benar
-                  </p>
-                </div>
-
-                <div className="space-y-4 bg-gray-900/30 backdrop-blur-sm p-5 rounded-xl border border-orange-500/20">
-                  <div className="flex items-center justify-between py-2 border-b border-gray-700/50">
-                    <span className="text-sm text-text-muted">Kode:</span>
-                    <span className="text-base font-bold text-orange-400 tracking-wider">{data.code}</span>
-                  </div>
-                  <div className="flex items-center justify-between py-2 border-b border-gray-700/50">
-                    <span className="text-sm text-text-muted">Nama:</span>
-                    <span className="text-base font-medium text-text-light">{data.name}</span>
-                  </div>
-                  <div className="flex items-center justify-between py-2">
-                    <span className="text-sm text-text-muted">WhatsApp:</span>
-                    <span className="text-base font-medium text-text-light">{data.phone}</span>
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {/* Error Message with Spooky Icon */}
-            {error && (
-              <div className="flex items-center gap-3 p-4 bg-red-950/50 backdrop-blur-sm border-2 border-red-500/50 rounded-lg animate-shake">
-                <AlertCircle className="w-5 h-5 text-red-400 flex-shrink-0" />
-                <p className="text-sm text-red-300">{error}</p>
-              </div>
-            )}
-
-            {/* Action Buttons */}
-            <div className="space-y-3 mt-6">
-              <Button
-                onClick={handleNext}
-                disabled={!validateStep() || loading}
-                className="w-full h-14 bg-gradient-to-r from-orange-600 via-orange-500 to-red-600 hover:from-orange-700 hover:via-orange-600 hover:to-red-700 text-white font-bold text-base shadow-lg shadow-orange-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-300 transform hover:scale-105 hover:shadow-xl hover:shadow-orange-500/50 relative overflow-hidden group"
-              >
-                <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-700"></div>
-                {loading ? (
-                  <div className="flex items-center space-x-2">
-                    <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    <span>
-                      {step === 1 ? "Memvalidasi..." : step === 3 ? "Mendaftarkan..." : "Memproses..."}
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex items-center justify-center space-x-2">
-                    <span>
-                      {step === 1 ? "Lanjut" : step === 2 ? "Lanjut" : "Daftar Sekarang"}
-                    </span>
-                    <ArrowRight className="w-5 h-5" />
-                  </div>
-                )}
-              </Button>
-
-              {step > 1 && (
-                <Button
-                  onClick={handleBack}
-                  variant="outline"
-                  disabled={loading}
-                  className="w-full h-12 border-2 border-orange-500/40 bg-transparent text-text-light hover:bg-orange-500/10 hover:border-orange-500/60 transition-all duration-300"
-                >
-                  Kembali
-                </Button>
-              )}
+      {/* Content */}
+      <div className="relative z-10 min-h-screen flex flex-col">
+        {/* Header */}
+        <header className="p-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <div className="p-2 bg-christmas-red/20 rounded-xl">
+              <TreePine className="w-6 h-6 text-christmas-red" />
             </div>
-          </CardContent>
-        </Card>
+            <div>
+              <h1 className="text-sm font-bold text-white">Supermal Karawaci</h1>
+              <p className="text-xs text-gray-400">Shopping Journey</p>
+            </div>
+          </div>
 
-        {/* Recovery Dialog with Halloween Theme */}
-        <div className="mt-8 text-center">
-          <Dialog open={showRecovery} onOpenChange={setShowRecovery}>
-            <DialogTrigger asChild>
-              <Button 
-                variant="ghost" 
-                className="text-text-muted hover:text-orange-400 text-sm hover:bg-orange-500/10 transition-all duration-300 group"
+          {/* Quota badge */}
+          {quota && (
+            <QuotaDisplay
+              remaining={quota.remaining}
+              total={quota.total}
+            />
+          )}
+        </header>
+
+        {/* Main content */}
+        <main className="flex-1 px-4 pb-8">
+          <AnimatePresence mode="wait">
+            {/* Step 1 & 2: Registration Form */}
+            {step < 3 && !showRecovery && (
+              <motion.div
+                key="registration"
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                variants={fadeInUp}
+                className="max-w-md mx-auto"
               >
-                <RefreshCw className="w-4 h-4 mr-2 group-hover:rotate-180 transition-transform duration-500" />
-                Sudah pernah daftar? Lanjutkan Progress
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="bg-gradient-to-br from-gray-900 via-purple-950/50 to-gray-900 border-2 border-orange-500/30 text-text-light max-w-md backdrop-blur-xl">
-              <DialogHeader>
-                <DialogTitle className="text-2xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent flex items-center gap-2">
-                  <Phone className="w-6 h-6 text-orange-500" />
-                  Lanjutkan Progress
-                </DialogTitle>
-              </DialogHeader>
-              
-              <div className="space-y-4 mt-4">
-                <p className="text-text-muted text-sm">
-                  Masukkan nomor WhatsApp yang Anda gunakan saat mendaftar untuk melanjutkan progress permainan
-                </p>
-
-                <Input
-                  type="tel"
-                  value={recoveryPhone}
-                  onChange={(e) => setRecoveryPhone(e.target.value.replace(/[^0-9]/g, "").slice(0, 13))}
-                  placeholder="08xxxxxxxxxx"
-                  disabled={recoveryLoading}
-                  className="h-12 bg-gray-900/50 border-2 border-orange-500/30 focus:border-orange-500 focus:ring-2 focus:ring-orange-500/50 text-white placeholder:text-gray-500"
-                />
-
-                <Button
-                  onClick={handleRecovery}
-                  disabled={recoveryLoading || recoveryPhone.length < 10}
-                  className="w-full h-12 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-bold shadow-lg shadow-orange-500/30 transition-all duration-300 hover:shadow-xl hover:shadow-orange-500/50"
+                {/* Hero section */}
+                <motion.div
+                  className="text-center mb-6 mt-4"
+                  variants={staggerContainer}
                 >
-                  {recoveryLoading ? (
-                    <div className="flex items-center space-x-2">
-                      <div className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                      <span>Mencari...</span>
-                    </div>
-                  ) : (
-                    "Lanjutkan Progress"
-                  )}
-                </Button>
-              </div>
-            </DialogContent>
-          </Dialog>
-        </div>
+                  <motion.div variants={fadeInUp} className="mb-4">
+                    <Badge variant="christmas" className="mb-3">
+                      <Sparkles className="w-3 h-3 mr-1" />
+                      {EVENT_CONFIG.date.split("-").reverse().join("/")} • {EVENT_CONFIG.startTime} - {EVENT_CONFIG.endTime}
+                    </Badge>
+                  </motion.div>
 
-        {/* Event Info with Pumpkin */}
-        <div className="mt-8 text-center text-xs text-text-muted flex items-center gap-2 backdrop-blur-sm bg-gray-900/30 px-4 py-2 rounded-full border border-orange-500/20">
-          <span>🎃</span>
-          <span>Supermal Karawaci × 🎃 Week of the Living Deals Halloween</span>
-          <span>🎃</span>
-        </div>
+                  <motion.h2
+                    variants={fadeInUp}
+                    className="text-2xl md:text-3xl font-bold mb-2"
+                  >
+                    <span className="text-gradient-christmas">Christmas</span>
+                    <br />
+                    <span className="text-white">Super Midnight Sale</span>
+                  </motion.h2>
+
+                  <motion.p
+                    variants={fadeInUp}
+                    className="text-gray-400 text-sm"
+                  >
+                    Selesaikan 2 misi belanja dan menangkan
+                  </motion.p>
+
+                  <motion.div
+                    variants={scaleIn}
+                    className="mt-3 inline-flex items-center gap-2 px-4 py-2 bg-christmas-gold/20 rounded-full border border-christmas-gold/30"
+                  >
+                    <Gift className="w-5 h-5 text-christmas-gold" />
+                    <span className="text-christmas-gold font-bold text-lg">
+                      {formatRupiah(EVENT_CONFIG.voucherAmount)}
+                    </span>
+                    <span className="text-christmas-gold/70 text-sm">Cash Voucher</span>
+                  </motion.div>
+                </motion.div>
+
+                {/* Mission preview cards */}
+                <motion.div
+                  variants={fadeInUp}
+                  className="grid grid-cols-2 gap-3 mb-6"
+                >
+                  <Card variant="christmas" className="p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1.5 bg-christmas-red/30 rounded-lg">
+                        <Utensils className="w-4 h-4 text-christmas-red" />
+                      </div>
+                      <span className="text-xs font-semibold text-white">Misi 1</span>
+                    </div>
+                    <p className="text-xs text-gray-400">F&B</p>
+                    <p className="text-sm font-bold text-christmas-red">
+                      Min. {formatRupiah(MISSION_1.minAmount)}
+                    </p>
+                  </Card>
+
+                  <Card variant="success" className="p-3">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div className="p-1.5 bg-christmas-green/30 rounded-lg">
+                        <Shirt className="w-4 h-4 text-christmas-green" />
+                      </div>
+                      <span className="text-xs font-semibold text-white">Misi 2</span>
+                    </div>
+                    <p className="text-xs text-gray-400">Fashion</p>
+                    <p className="text-sm font-bold text-christmas-green">
+                      Min. {formatRupiah(MISSION_2.minAmount)}
+                    </p>
+                  </Card>
+                </motion.div>
+
+                {/* Step indicator */}
+                <motion.div variants={fadeInUp} className="mb-6">
+                  <StepProgress
+                    currentStep={step}
+                    totalSteps={2}
+                    icons={[
+                      <User key="1" className="w-5 h-5" />,
+                      <Check key="2" className="w-5 h-5" />,
+                    ]}
+                  />
+                </motion.div>
+
+                {/* Form card */}
+                <motion.div variants={fadeInUp}>
+                  <Card variant="glass" className="overflow-hidden">
+                    <CardContent className="p-6">
+                      <AnimatePresence mode="wait">
+                        {/* Step 1: Personal Info */}
+                        {step === 1 && (
+                          <motion.div
+                            key="step1"
+                            initial="initial"
+                            animate="animate"
+                            exit="exit"
+                            variants={fadeInUp}
+                            className="space-y-4"
+                          >
+                            <div className="text-center mb-4">
+                              <h3 className="text-lg font-bold text-white">Daftar Sekarang</h3>
+                              <p className="text-sm text-gray-400">Isi data diri Anda</p>
+                            </div>
+
+                            {/* Name input */}
+                            <div className="space-y-2">
+                              <Label htmlFor="name" className="text-gray-300">
+                                Nama Lengkap
+                              </Label>
+                              <div className="relative">
+                                <User className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                                <Input
+                                  id="name"
+                                  type="text"
+                                  placeholder="Masukkan nama lengkap"
+                                  value={formData.name}
+                                  onChange={(e) => handleInputChange("name", e.target.value)}
+                                  className="pl-10"
+                                  error={!!errors.name}
+                                  autoComplete="name"
+                                />
+                              </div>
+                              {errors.name && (
+                                <p className="text-xs text-christmas-red flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  {errors.name}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Phone input */}
+                            <div className="space-y-2">
+                              <Label htmlFor="phone" className="text-gray-300">
+                                Nomor WhatsApp
+                              </Label>
+                              <div className="relative">
+                                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                                <Input
+                                  id="phone"
+                                  type="tel"
+                                  placeholder="081234567890"
+                                  value={formData.phone}
+                                  onChange={(e) => handleInputChange("phone", e.target.value)}
+                                  className="pl-10"
+                                  error={!!errors.phone}
+                                  autoComplete="tel"
+                                  inputMode="numeric"
+                                />
+                              </div>
+                              {errors.phone && (
+                                <p className="text-xs text-christmas-red flex items-center gap-1">
+                                  <AlertCircle className="w-3 h-3" />
+                                  {errors.phone}
+                                </p>
+                              )}
+                            </div>
+
+                            {/* Next button */}
+                            <Button
+                              onClick={handleNext}
+                              className="w-full"
+                              size="lg"
+                            >
+                              Lanjutkan
+                              <ChevronRight className="w-4 h-4 ml-1" />
+                            </Button>
+
+                            {/* Recovery link */}
+                            <div className="text-center pt-2">
+                              <button
+                                type="button"
+                                onClick={() => setShowRecovery(true)}
+                                className="text-sm text-gray-400 hover:text-christmas-gold transition-colors"
+                              >
+                                Sudah pernah daftar? <span className="text-christmas-gold">Cek status</span>
+                              </button>
+                            </div>
+                          </motion.div>
+                        )}
+
+                        {/* Step 2: Confirmation */}
+                        {step === 2 && (
+                          <motion.div
+                            key="step2"
+                            initial="initial"
+                            animate="animate"
+                            exit="exit"
+                            variants={fadeInUp}
+                            className="space-y-4"
+                          >
+                            <div className="text-center mb-4">
+                              <h3 className="text-lg font-bold text-white">Konfirmasi Data</h3>
+                              <p className="text-sm text-gray-400">Pastikan data Anda sudah benar</p>
+                            </div>
+
+                            {/* Data summary */}
+                            <div className="bg-gray-800/50 rounded-xl p-4 space-y-3">
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-400 text-sm">Nama</span>
+                                <span className="text-white font-medium">{formData.name}</span>
+                              </div>
+                              <div className="h-px bg-gray-700" />
+                              <div className="flex items-center justify-between">
+                                <span className="text-gray-400 text-sm">WhatsApp</span>
+                                <span className="text-white font-medium">{formData.phone}</span>
+                              </div>
+                            </div>
+
+                            {/* Terms checkbox */}
+                            <div className="flex items-start gap-3 p-4 bg-gray-800/30 rounded-xl">
+                              <Checkbox
+                                id="terms"
+                                checked={formData.acceptTerms}
+                                onCheckedChange={(checked) =>
+                                  handleInputChange("acceptTerms", checked as boolean)
+                                }
+                                className="mt-0.5"
+                              />
+                              <label
+                                htmlFor="terms"
+                                className="text-sm text-gray-300 cursor-pointer"
+                              >
+                                Saya menyetujui{" "}
+                                <a
+                                  href={PAGE_ROUTES.terms}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-christmas-gold hover:underline"
+                                >
+                                  Syarat & Ketentuan
+                                </a>
+                                {" "}yang berlaku
+                              </label>
+                            </div>
+                            {errors.acceptTerms && (
+                              <p className="text-xs text-christmas-red flex items-center gap-1">
+                                <AlertCircle className="w-3 h-3" />
+                                {errors.acceptTerms}
+                              </p>
+                            )}
+
+                            {/* Error message */}
+                            {errors.general && (
+                              <div className="p-3 bg-christmas-red/10 border border-christmas-red/30 rounded-xl">
+                                <p className="text-sm text-christmas-red flex items-center gap-2">
+                                  <AlertCircle className="w-4 h-4" />
+                                  {errors.general}
+                                </p>
+                              </div>
+                            )}
+
+                            {/* Action buttons */}
+                            <div className="flex gap-3">
+                              <Button
+                                onClick={handleBack}
+                                variant="outline"
+                                className="flex-1"
+                              >
+                                <ArrowLeft className="w-4 h-4 mr-1" />
+                                Kembali
+                              </Button>
+                              <Button
+                                onClick={handleNext}
+                                loading={loading}
+                                className="flex-1"
+                              >
+                                {loading ? "Mendaftar..." : "Daftar"}
+                              </Button>
+                            </div>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
+                    </CardContent>
+                  </Card>
+                </motion.div>
+
+                {/* Event info */}
+                <motion.div
+                  variants={fadeInUp}
+                  className="mt-6 flex flex-wrap justify-center gap-4 text-xs text-gray-500"
+                >
+                  <div className="flex items-center gap-1">
+                    <Clock className="w-3 h-3" />
+                    <span>{EVENT_CONFIG.startTime} - {EVENT_CONFIG.endTime} WIB</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <MapPin className="w-3 h-3" />
+                    <span>{EVENT_CONFIG.location}</span>
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <Gift className="w-3 h-3" />
+                    <span>{EVENT_CONFIG.totalQuota} voucher tersedia</span>
+                  </div>
+                </motion.div>
+              </motion.div>
+            )}
+
+            {/* Step 3: Success */}
+            {step === 3 && (
+              <motion.div
+                key="success"
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                variants={scaleIn}
+                className="max-w-md mx-auto flex flex-col items-center justify-center min-h-[60vh] text-center"
+              >
+                <motion.div
+                  initial={{ scale: 0 }}
+                  animate={{ scale: 1 }}
+                  transition={{ type: "spring", delay: 0.2 }}
+                  className="w-24 h-24 bg-gradient-to-br from-christmas-green to-green-600 rounded-full flex items-center justify-center mb-6 shadow-lg shadow-christmas-green/50"
+                >
+                  <Check className="w-12 h-12 text-white" />
+                </motion.div>
+
+                <motion.h2
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 }}
+                  className="text-2xl font-bold text-white mb-2"
+                >
+                  Pendaftaran Berhasil!
+                </motion.h2>
+
+                <motion.p
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.4 }}
+                  className="text-gray-400 mb-4"
+                >
+                  Selamat datang, <span className="text-christmas-gold">{formData.name}</span>
+                </motion.p>
+
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
+                  transition={{ delay: 0.5 }}
+                  className="flex items-center gap-2 text-gray-500"
+                >
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  <span className="text-sm">Mengalihkan ke dashboard...</span>
+                </motion.div>
+              </motion.div>
+            )}
+
+            {/* Recovery mode */}
+            {showRecovery && (
+              <motion.div
+                key="recovery"
+                initial="initial"
+                animate="animate"
+                exit="exit"
+                variants={fadeInUp}
+                className="max-w-md mx-auto mt-8"
+              >
+                <Card variant="glass">
+                  <CardContent className="p-6 space-y-4">
+                    <div className="text-center mb-4">
+                      <div className="w-16 h-16 bg-christmas-gold/20 rounded-full flex items-center justify-center mx-auto mb-4">
+                        <ShoppingBag className="w-8 h-8 text-christmas-gold" />
+                      </div>
+                      <h3 className="text-lg font-bold text-white">Cek Status</h3>
+                      <p className="text-sm text-gray-400">Masukkan nomor HP yang terdaftar</p>
+                    </div>
+
+                    <div className="space-y-2">
+                      <Label htmlFor="recovery-phone" className="text-gray-300">
+                        Nomor WhatsApp
+                      </Label>
+                      <div className="relative">
+                        <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-500" />
+                        <Input
+                          id="recovery-phone"
+                          type="tel"
+                          placeholder="081234567890"
+                          value={recoveryPhone}
+                          onChange={(e) => setRecoveryPhone(e.target.value)}
+                          className="pl-10"
+                          inputMode="numeric"
+                        />
+                      </div>
+                    </div>
+
+                    <Button
+                      onClick={handleRecovery}
+                      loading={recoveryLoading}
+                      className="w-full"
+                      variant="gold"
+                    >
+                      Cari Progress Saya
+                    </Button>
+
+                    <Button
+                      onClick={() => setShowRecovery(false)}
+                      variant="ghost"
+                      className="w-full"
+                    >
+                      <ArrowLeft className="w-4 h-4 mr-1" />
+                      Kembali ke Pendaftaran
+                    </Button>
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </main>
+
+        {/* Footer */}
+        <footer className="p-4 text-center">
+          <p className="text-xs text-gray-600">
+            © 2025 Supermal Karawaci. All rights reserved.
+          </p>
+        </footer>
       </div>
     </div>
   )

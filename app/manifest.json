@@ -1,11 +1,11 @@
 {
-  "name": "Spooky Hunt Supermal Karawaci",
-  "short_name": "SpookyHunt",
-  "description": "Progressive Web App untuk spooky hunt halloween di Supermal Karawaci",
+  "name": "Shopping Journey - Supermal Karawaci",
+  "short_name": "ShoppingJourney",
+  "description": "Selesaikan misi belanja dan menangkan voucher Rp 100.000! Christmas Super Midnight Sale 2025",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#121421",
-  "theme_color": "#D4AF37",
+  "background_color": "#0f1419",
+  "theme_color": "#dc2626",
   "orientation": "portrait",
   "icons": [
     {
@@ -21,7 +21,22 @@
       "purpose": "maskable any"
     }
   ],
-  "categories": ["games", "entertainment"],
+  "categories": [
+    "shopping",
+    "lifestyle",
+    "entertainment"
+  ],
   "lang": "id",
-  "dir": "ltr"
+  "dir": "ltr",
+  "scope": "/",
+  "prefer_related_applications": false,
+  "screenshots": [
+    {
+      "src": "/screenshot-mobile.png",
+      "sizes": "390x844",
+      "type": "image/png",
+      "form_factor": "narrow",
+      "label": "Shopping Journey - Dashboard"
+    }
+  ]
 }

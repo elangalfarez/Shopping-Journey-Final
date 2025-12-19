@@ -1,448 +1,608 @@
 // app/dashboard/page.tsx
-// Created: Halloween-themed dashboard with world-class animations and spooky atmosphere
+// Created: Dashboard with mission progress and navigation
 
 "use client"
 
-import { useState, useEffect } from "react"
+import { useEffect, useState } from "react"
 import { useRouter } from "next/navigation"
+import { motion, AnimatePresence } from "framer-motion"
+import {
+  Gift,
+  Utensils,
+  Shirt,
+  ChevronRight,
+  Check,
+  Clock,
+  Lock,
+  Camera,
+  Sparkles,
+  Trophy,
+  RefreshCw,
+  AlertCircle,
+  PartyPopper,
+} from "lucide-react"
+
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
-import SegmentedProgressBar from "@/components/SegmentedProgressBar"
-import { Camera, Lock, CheckCircle, TrendingUp, ChevronDown, ChevronUp, Ghost, Skull, Trophy, Sparkles, Flame, Target } from "lucide-react"
-import { supabaseApi, Location, Player, PlayerProgress } from "@/lib/supabase"
+import { Badge } from "@/components/ui/badge"
+import { Progress } from "@/components/ui/progress"
+import { useToast } from "@/components/ui/use-toast"
+import Header, { QuotaDisplay } from "@/components/Header"
+import { SegmentedProgressBar } from "@/components/ui/segmented-progress"
 
-interface PlayerData {
-  name: string
-  phone: string
-  code: string
+import { useParticipant } from "@/hooks/useParticipant"
+import { useQuota } from "@/hooks/useQuota"
+import { formatRupiah, formatTime } from "@/lib/utils"
+import {
+  EVENT_CONFIG,
+  MISSION_1,
+  MISSION_2,
+  PAGE_ROUTES,
+} from "@/lib/constants"
+import type { MissionState, MissionStatus } from "@/lib/types"
+
+// ===========================================
+// ANIMATION VARIANTS
+// ===========================================
+
+const fadeInUp = {
+  initial: { opacity: 0, y: 20 },
+  animate: { opacity: 1, y: 0 },
+  exit: { opacity: 0, y: -20 },
 }
 
-export default function HalloweenDashboardPage() {
-  const [playerData, setPlayerData] = useState<PlayerData | null>(null)
-  const [player, setPlayer] = useState<Player | null>(null)
-  const [locations, setLocations] = useState<Location[]>([])
-  const [progress, setProgress] = useState<PlayerProgress[]>([])
-  const [showInstructions, setShowInstructions] = useState(false)
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState('')
-  const router = useRouter()
+const staggerContainer = {
+  animate: {
+    transition: {
+      staggerChildren: 0.1,
+    },
+  },
+}
 
-  useEffect(() => {
-    initializeDashboard()
-  }, [router])
+const scaleIn = {
+  initial: { opacity: 0, scale: 0.9 },
+  animate: { opacity: 1, scale: 1 },
+  exit: { opacity: 0, scale: 0.9 },
+}
 
-  useEffect(() => {
-    if (player) {
-      const interval = setInterval(async () => {
-        try {
-          const progressData = await supabaseApi.getPlayerProgress(player.id)
-          setProgress(progressData)
-        } catch (error) {
-          console.error('Auto-refresh error:', error)
-        }
-      }, 30000)
+const pulseGlow = {
+  animate: {
+    boxShadow: [
+      "0 0 20px rgba(220, 38, 38, 0.3)",
+      "0 0 40px rgba(220, 38, 38, 0.5)",
+      "0 0 20px rgba(220, 38, 38, 0.3)",
+    ],
+    transition: {
+      duration: 2,
+      repeat: Infinity,
+    },
+  },
+}
 
-      return () => clearInterval(interval)
+// ===========================================
+// MISSION CARD COMPONENT
+// ===========================================
+
+interface MissionCardProps {
+  mission: MissionState
+  index: number
+  isLocked: boolean
+  onStart: () => void
+}
+
+function MissionCard({ mission, index, isLocked, onStart }: MissionCardProps) {
+  const { config, status, amount, timestamp } = mission
+  const isCompleted = status === "completed"
+  const isAvailable = !isLocked && !isCompleted
+
+  // Determine card styling based on status
+  const getCardStyle = () => {
+    if (isCompleted) {
+      return config.id === 1
+        ? "border-christmas-red/50 bg-gradient-to-br from-christmas-red/20 to-red-900/10"
+        : "border-christmas-green/50 bg-gradient-to-br from-christmas-green/20 to-green-900/10"
     }
-  }, [player])
-
-  const initializeDashboard = async () => {
-    try {
-      const playerId = localStorage.getItem("playerId")
-      const playerName = localStorage.getItem("playerName") 
-      const playerPhone = localStorage.getItem("playerPhone")
-      
-      if (!playerId || !playerName || !playerPhone) {
-        router.push("/")
-        return
-      }
-      
-      setPlayerData({
-        name: playerName,
-        phone: playerPhone,
-        code: "REGISTERED"
-      })
-
-      setLoading(true)
-
-      const [playerDataFromDB, locationsData, progressData] = await Promise.all([
-        supabaseApi.getPlayer(parseInt(playerId)),
-        supabaseApi.getLocations(),
-        supabaseApi.getPlayerProgress(parseInt(playerId))
-      ])
-
-      if (!playerDataFromDB) {
-        localStorage.clear()
-        router.push('/')
-        return
-      }
-
-      setPlayer(playerDataFromDB)
-      setLocations(locationsData)
-      setProgress(progressData)
-
-    } catch (error) {
-      console.error('Dashboard initialization error:', error)
-      setError('Terjadi kesalahan saat memuat data')
-    } finally {
-      setLoading(false)
+    if (isLocked) {
+      return "border-gray-700/50 bg-gray-800/30 opacity-60"
     }
+    return config.id === 1
+      ? "border-christmas-red/30 bg-gradient-to-br from-gray-800/50 to-red-950/20 hover:border-christmas-red/50"
+      : "border-christmas-green/30 bg-gradient-to-br from-gray-800/50 to-green-950/20 hover:border-christmas-green/50"
   }
 
-  const completedCount = progress.length
-  const totalCount = locations.length
-  const progressPercentage = totalCount > 0 ? Math.round((completedCount / totalCount) * 100) : 0
-
-  const getLocationStatus = (location: Location, index: number) => {
-    const isCompleted = progress.some(p => p.location_id === location.id)
-    const previousCompleted = index === 0 || progress.some(p => p.location_id === locations[index - 1]?.id)
-    
-    if (isCompleted) return 'completed'
-    if (previousCompleted) return 'available'
-    return 'locked'
+  const getIconBg = () => {
+    if (isCompleted) {
+      return config.id === 1 ? "bg-christmas-red" : "bg-christmas-green"
+    }
+    if (isLocked) {
+      return "bg-gray-700"
+    }
+    return config.id === 1 ? "bg-christmas-red/20" : "bg-christmas-green/20"
   }
 
-  const handleLocationClick = (location: Location) => {
-    const status = getLocationStatus(location, locations.findIndex(l => l.id === location.id))
-    
-    if (status === 'locked') {
-      return
+  const getIconColor = () => {
+    if (isCompleted || isLocked) {
+      return "text-white"
     }
-    
-    if (status === 'completed') {
-      return
-    }
-
-    router.push(`/scanner/${location.id}`)
+    return config.id === 1 ? "text-christmas-red" : "text-christmas-green"
   }
 
-  const getLocationIcon = (location: Location, index: number) => {
-    const status = getLocationStatus(location, index)
-    
-    if (status === 'completed') {
-      return <CheckCircle className="w-6 h-6 text-green-400 animate-bounce-subtle" />
-    }
-    if (status === 'available') {
-      return <Camera className="w-6 h-6 text-orange-500 animate-pulse-glow" />
-    }
-    return <Lock className="w-6 h-6 text-gray-600" />
-  }
-
-  const getLocationCardClass = (location: Location, index: number) => {
-    const status = getLocationStatus(location, index)
-    
-    if (status === 'completed') {
-      return 'bg-gradient-to-br from-green-900/40 to-green-950/20 border-2 border-green-500/40 cursor-default backdrop-blur-md'
-    }
-    if (status === 'available') {
-      return 'bg-gradient-to-br from-orange-900/40 to-red-950/20 border-2 border-orange-500/50 cursor-pointer hover:scale-105 hover:shadow-xl hover:shadow-orange-500/30 backdrop-blur-md animate-glow-pulse'
-    }
-    return 'bg-gradient-to-br from-gray-900/60 to-gray-950/40 border-2 border-gray-700/30 cursor-not-allowed opacity-60 backdrop-blur-md'
-  }
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f1f] to-[#0a0a0f] flex items-center justify-center">
-        <div className="text-center space-y-4">
-          <div className="relative">
-            <div className="w-20 h-20 border-4 border-orange-500/30 border-t-orange-500 rounded-full animate-spin mx-auto"></div>
-            <Ghost className="w-10 h-10 text-orange-500 absolute top-1/2 left-1/2 transform -translate-x-1/2 -translate-y-1/2 animate-pulse" />
-          </div>
-          <p className="text-text-muted animate-pulse">Memuat petualangan seram...</p>
-        </div>
-      </div>
-    )
-  }
-
-  if (error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f1f] to-[#0a0a0f] flex items-center justify-center p-4">
-        <Card className="max-w-md w-full backdrop-blur-xl bg-gradient-to-br from-red-900/40 to-gray-900/80 border-2 border-red-500/40">
-          <CardContent className="p-6 text-center">
-            <Skull className="w-16 h-16 text-red-500 mx-auto mb-4 animate-bounce" />
-            <h3 className="font-semibold mb-2 text-red-400 text-xl">Terjadi Kesalahan</h3>
-            <p className="text-sm mb-4 text-text-muted">{error}</p>
-            <Button 
-              onClick={initializeDashboard}
-              className="bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-bold"
-            >
-              Coba Lagi
-            </Button>
-          </CardContent>
-        </Card>
-      </div>
-    )
-  }
-
-  if (!playerData) return null
+  const Icon = config.id === 1 ? Utensils : Shirt
 
   return (
-    <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f1f] to-[#0a0a0f] relative overflow-hidden">
-      {/* Animated Halloween Background Elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        {/* Floating Pumpkins */}
-        <div className="halloween-pumpkin pumpkin-1">🎃</div>
-        <div className="halloween-pumpkin pumpkin-2">🎃</div>
-        <div className="halloween-pumpkin pumpkin-3">🎃</div>
-        
-        {/* Floating Ghosts */}
-        <div className="halloween-ghost ghost-1">👻</div>
-        <div className="halloween-ghost ghost-2">👻</div>
-        
-        {/* Spooky Fog Effect */}
-        <div className="fog fog-1"></div>
-        <div className="fog fog-2"></div>
-        <div className="fog fog-3"></div>
-        
-        {/* Floating Particles */}
-        {Array.from({ length: 15 }).map((_, i) => (
-          <div
-            key={i}
-            className="halloween-particle"
-            style={{
-              left: `${Math.random() * 100}%`,
-              animationDelay: `${Math.random() * 5}s`,
-              animationDuration: `${8 + Math.random() * 4}s`,
-            }}
-          />
-        ))}
-      </div>
+    <motion.div
+      variants={fadeInUp}
+      initial="initial"
+      animate="animate"
+      transition={{ delay: index * 0.1 }}
+      whileHover={isAvailable ? { scale: 1.02 } : undefined}
+      whileTap={isAvailable ? { scale: 0.98 } : undefined}
+    >
+      <Card
+        className={`relative overflow-hidden transition-all duration-300 ${getCardStyle()}`}
+      >
+        {/* Completed badge */}
+        {isCompleted && (
+          <div className="absolute top-3 right-3">
+            <Badge variant="success" className="gap-1">
+              <Check className="w-3 h-3" />
+              Selesai
+            </Badge>
+          </div>
+        )}
 
-      {/* Header with Spooky Glow */}
-      <div className="relative z-10 bg-gradient-to-r from-purple-950/60 via-orange-950/60 to-purple-950/60 backdrop-blur-xl border-b-2 border-orange-500/30 shadow-2xl shadow-orange-500/20">
-        <div className="text-center space-y-4 py-8">
-          <div className="flex justify-center mb-3">
-            <div className="relative">
-              <div className="absolute inset-0 bg-orange-500/30 blur-xl rounded-full animate-pulse-glow"></div>
-              <Trophy className="w-16 h-16 text-orange-500 relative drop-shadow-[0_0_15px_rgba(251,146,60,0.8)]" />
+        {/* Locked overlay */}
+        {isLocked && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/20 backdrop-blur-[1px] z-10">
+            <div className="text-center">
+              <Lock className="w-8 h-8 text-gray-500 mx-auto mb-2" />
+              <p className="text-xs text-gray-500">Selesaikan misi sebelumnya</p>
             </div>
           </div>
-          
-          <h1 className="text-4xl md:text-5xl font-bold bg-gradient-to-r from-orange-400 via-red-500 to-orange-600 bg-clip-text text-transparent drop-shadow-[0_0_15px_rgba(251,146,60,0.5)] animate-text-glow px-4 leading-tight">
-            Halloween Spooky Hunt
-          </h1>
-          
-          <div className="space-y-1">
-            <p className="text-text-muted text-base md:text-lg">
-              Welcome,
-            </p>
-            <p className="text-3xl md:text-4xl font-bold bg-gradient-to-r from-orange-300 to-red-400 bg-clip-text text-transparent drop-shadow-[0_0_10px_rgba(251,146,60,0.4)]">
-              {playerData.name}
-            </p>
-          </div>
-        </div>
-      </div>
+        )}
 
-      <div className="relative z-10 p-4 space-y-6">
-        {/* Statistics Card with Glassmorphism */}
-        <Card className="backdrop-blur-xl bg-gradient-to-br from-gray-900/80 via-purple-950/40 to-gray-900/80 border-2 border-orange-500/30 shadow-2xl shadow-orange-500/20 relative overflow-hidden group">
-          <div className="absolute inset-0 bg-gradient-to-r from-orange-500/0 via-orange-500/10 to-orange-500/0 opacity-0 group-hover:opacity-100 transition-opacity duration-500"></div>
-          
-          <CardContent className="p-6 relative z-10">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
-                Progress Anda
-              </h3>
-              <span className="bg-gradient-to-r from-orange-600 to-red-600 text-white font-bold px-4 py-2 rounded-full shadow-lg shadow-orange-500/30 text-lg">
-                {completedCount}/{totalCount}
+        <CardContent className="p-5">
+          {/* Header */}
+          <div className="flex items-start gap-4 mb-4">
+            <div
+              className={`w-14 h-14 rounded-2xl flex items-center justify-center ${getIconBg()} transition-colors`}
+            >
+              {isCompleted ? (
+                <Check className="w-7 h-7 text-white" />
+              ) : (
+                <Icon className={`w-7 h-7 ${getIconColor()}`} />
+              )}
+            </div>
+
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs text-gray-500 uppercase tracking-wider">
+                  Misi {config.id}
+                </span>
+              </div>
+              <h3 className="text-lg font-bold text-white">{config.category}</h3>
+            </div>
+          </div>
+
+          {/* Requirements */}
+          <div className="space-y-2 mb-4">
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-400">Minimum Belanja</span>
+              <span
+                className={`font-bold ${config.id === 1 ? "text-christmas-red" : "text-christmas-green"
+                  }`}
+              >
+                {formatRupiah(config.minAmount)}
               </span>
             </div>
-            
-            <SegmentedProgressBar 
-              current={completedCount} 
-              total={totalCount}
-              className="mb-6"
-            />
-            
-            <div className="grid grid-cols-3 gap-4 text-center">
-              <div className="space-y-2 p-3 rounded-xl bg-green-900/20 border border-green-500/30 backdrop-blur-sm transform transition-all duration-300 hover:scale-105 hover:bg-green-900/30">
-                <div className="text-3xl font-bold text-green-400 drop-shadow-[0_0_8px_rgba(74,222,128,0.5)]">
-                  {completedCount}
-                </div>
-                <div className="text-xs text-green-300 font-medium flex items-center justify-center gap-1">
-                  <CheckCircle className="w-3 h-3" />
-                  Selesai
-                </div>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-gray-400">Waktu Transaksi</span>
+              <span className="text-white flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                ≥ {config.minTimeDisplay}
+              </span>
+            </div>
+          </div>
+
+          {/* Completed info */}
+          {isCompleted && amount && (
+            <div className="bg-gray-800/50 rounded-xl p-3 mb-4">
+              <div className="flex items-center justify-between text-sm">
+                <span className="text-gray-400">Total Belanja</span>
+                <span className="font-bold text-christmas-gold">
+                  {formatRupiah(amount)}
+                </span>
               </div>
-              
-              <div className="space-y-2 p-3 rounded-xl bg-orange-900/20 border border-orange-500/30 backdrop-blur-sm transform transition-all duration-300 hover:scale-105 hover:bg-orange-900/30">
-                <div className="text-3xl font-bold text-orange-400 drop-shadow-[0_0_8px_rgba(251,146,60,0.5)]">
-                  {locations.filter((l, i) => getLocationStatus(l, i) === "available").length}
+              {timestamp && (
+                <div className="flex items-center justify-between text-sm mt-1">
+                  <span className="text-gray-400">Waktu</span>
+                  <span className="text-gray-300">{formatTime(timestamp)}</span>
                 </div>
-                <div className="text-xs text-orange-300 font-medium flex items-center justify-center gap-1">
-                  <Target className="w-3 h-3" />
-                  Tersedia
-                </div>
+              )}
+            </div>
+          )}
+
+          {/* Action button */}
+          {!isCompleted && !isLocked && (
+            <Button
+              onClick={onStart}
+              className="w-full"
+              variant={config.id === 1 ? "default" : "secondary"}
+            >
+              <Camera className="w-4 h-4 mr-2" />
+              Upload Struk
+              <ChevronRight className="w-4 h-4 ml-1" />
+            </Button>
+          )}
+
+          {isCompleted && (
+            <div className="flex items-center justify-center gap-2 text-sm text-christmas-green">
+              <Check className="w-4 h-4" />
+              Misi telah diselesaikan
+            </div>
+          )}
+        </CardContent>
+
+        {/* Glow effect for available missions */}
+        {isAvailable && (
+          <motion.div
+            className="absolute inset-0 pointer-events-none rounded-2xl"
+            animate={{
+              boxShadow:
+                config.id === 1
+                  ? [
+                    "inset 0 0 20px rgba(220, 38, 38, 0)",
+                    "inset 0 0 20px rgba(220, 38, 38, 0.1)",
+                    "inset 0 0 20px rgba(220, 38, 38, 0)",
+                  ]
+                  : [
+                    "inset 0 0 20px rgba(22, 163, 74, 0)",
+                    "inset 0 0 20px rgba(22, 163, 74, 0.1)",
+                    "inset 0 0 20px rgba(22, 163, 74, 0)",
+                  ],
+            }}
+            transition={{ duration: 2, repeat: Infinity }}
+          />
+        )}
+      </Card>
+    </motion.div>
+  )
+}
+
+// ===========================================
+// SUCCESS CELEBRATION COMPONENT
+// ===========================================
+
+function SuccessCelebration({ onClaim }: { onClaim: () => void }) {
+  return (
+    <motion.div
+      initial="initial"
+      animate="animate"
+      variants={scaleIn}
+      className="text-center py-8"
+    >
+      {/* Trophy animation */}
+      <motion.div
+        initial={{ scale: 0, rotate: -180 }}
+        animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: "spring", delay: 0.2 }}
+        className="relative inline-block mb-6"
+      >
+        <div className="w-28 h-28 bg-gradient-to-br from-christmas-gold to-amber-600 rounded-full flex items-center justify-center shadow-lg shadow-christmas-gold/50">
+          <Trophy className="w-14 h-14 text-white" />
+        </div>
+
+        {/* Sparkles */}
+        <motion.div
+          className="absolute -top-2 -right-2"
+          animate={{ scale: [1, 1.2, 1], rotate: [0, 10, 0] }}
+          transition={{ duration: 1.5, repeat: Infinity }}
+        >
+          <Sparkles className="w-8 h-8 text-christmas-gold" />
+        </motion.div>
+        <motion.div
+          className="absolute -bottom-2 -left-2"
+          animate={{ scale: [1, 1.2, 1], rotate: [0, -10, 0] }}
+          transition={{ duration: 1.5, repeat: Infinity, delay: 0.5 }}
+        >
+          <PartyPopper className="w-8 h-8 text-christmas-red" />
+        </motion.div>
+      </motion.div>
+
+      {/* Congratulations text */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.4 }}
+      >
+        <h2 className="text-2xl font-bold text-white mb-2">
+          Selamat! 🎉
+        </h2>
+        <p className="text-gray-400 mb-2">
+          Anda telah menyelesaikan semua misi
+        </p>
+        <p className="text-christmas-gold font-semibold mb-6">
+          Klaim voucher Anda sekarang!
+        </p>
+      </motion.div>
+
+      {/* Voucher preview */}
+      <motion.div
+        initial={{ opacity: 0, scale: 0.9 }}
+        animate={{ opacity: 1, scale: 1 }}
+        transition={{ delay: 0.6 }}
+        className="mb-6"
+      >
+        <Card variant="gold" className="inline-block">
+          <CardContent className="p-6">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-christmas-gold/30 rounded-xl">
+                <Gift className="w-8 h-8 text-christmas-gold" />
               </div>
-              
-              <div className="space-y-2 p-3 rounded-xl bg-purple-900/20 border border-purple-500/30 backdrop-blur-sm transform transition-all duration-300 hover:scale-105 hover:bg-purple-900/30">
-                <div className="text-3xl font-bold text-purple-400 drop-shadow-[0_0_8px_rgba(192,132,252,0.5)]">
-                  {progressPercentage}%
-                </div>
-                <div className="text-xs text-purple-300 font-medium flex items-center justify-center gap-1">
-                  <Sparkles className="w-3 h-3" />
-                  Progres
-                </div>
+              <div className="text-left">
+                <p className="text-xs text-christmas-gold/70 uppercase tracking-wider">
+                  Cash Voucher
+                </p>
+                <p className="text-2xl font-bold text-christmas-gold">
+                  {formatRupiah(EVENT_CONFIG.voucherAmount)}
+                </p>
               </div>
             </div>
           </CardContent>
         </Card>
+      </motion.div>
 
-        {/* Locations Grid */}
-        <div>
-          <h2 className="text-xl font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent mb-4">
-            Lokasi Treasure Hunt
-          </h2>
+      {/* Claim button */}
+      <motion.div
+        initial={{ opacity: 0, y: 20 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ delay: 0.8 }}
+      >
+        <Button onClick={onClaim} variant="gold" size="lg" className="w-full max-w-xs">
+          <Gift className="w-5 h-5 mr-2" />
+          Klaim Voucher
+          <ChevronRight className="w-5 h-5 ml-1" />
+        </Button>
+      </motion.div>
+    </motion.div>
+  )
+}
 
-          <div className="grid grid-cols-2 gap-4">
-            {locations.map((location, index) => {
-              const status = getLocationStatus(location, index)
-              
-              return (
-                <Card
-                  key={location.id}
-                  className={`transition-all duration-300 transform ${getLocationCardClass(location, index)}`}
-                  onClick={() => handleLocationClick(location)}
-                >
-                  <CardContent className="p-5 relative">
-                    {/* Status indicator glow */}
-                    {status === 'available' && (
-                      <div className="absolute top-2 right-2">
-                        <div className="relative">
-                          <div className="absolute inset-0 bg-orange-500 blur-md rounded-full animate-ping"></div>
-                          <Flame className="w-4 h-4 text-orange-500 relative" />
-                        </div>
-                      </div>
-                    )}
+// ===========================================
+// MAIN DASHBOARD COMPONENT
+// ===========================================
 
-                    <div className="flex items-center justify-between mb-3">
-                      <div className="p-2 rounded-full bg-gray-900/50 backdrop-blur-sm">
-                        {getLocationIcon(location, index)}
-                      </div>
-                      <span className={`text-xs font-bold px-3 py-1 rounded-full backdrop-blur-sm ${
-                        location.floor === 'GF' 
-                          ? 'bg-orange-500/20 text-orange-300 border border-orange-500/40' 
-                          : location.floor === 'UG'
-                          ? 'bg-purple-500/20 text-purple-300 border border-purple-500/40'
-                          : 'bg-red-500/20 text-red-300 border border-red-500/40'
-                      }`}>
-                        {location.floor}
-                      </span>
-                    </div>
+export default function DashboardPage() {
+  const router = useRouter()
+  const { toast } = useToast()
 
-                    <h4 className="font-bold text-text-light text-base mb-2 line-clamp-1">
-                      {location.name}
-                    </h4>
+  const {
+    participant,
+    session,
+    missions,
+    loading,
+    error,
+    allMissionsComplete,
+    refresh,
+    logout,
+  } = useParticipant({ requireAuth: true, realtime: true })
 
-                    <p className="text-xs text-text-muted/80 line-clamp-2 mb-3 italic">
-                      Clue: {location.clue}
-                    </p>
+  const { quota } = useQuota({ realtime: true })
 
-                    {status === 'available' && (
-                      <div className="flex items-center justify-center text-xs font-semibold text-orange-400 pt-2 border-t border-orange-500/20 gap-1">
-                        <span>Tap untuk mulai</span>
-                        <span className="animate-bounce">→</span>
-                      </div>
-                    )}
+  // Calculate progress
+  const completedCount = missions.filter((m) => m.status === "completed").length
+  const progressPercentage = (completedCount / 2) * 100
 
-                    {status === 'completed' && (
-                      <div className="flex items-center justify-center text-xs font-semibold text-green-400 pt-2 border-t border-green-500/20 gap-1">
-                        <CheckCircle className="w-3 h-3" />
-                        <span>Selesai</span>
-                      </div>
-                    )}
+  // Handle mission start
+  const handleStartMission = (missionId: 1 | 2) => {
+    router.push(PAGE_ROUTES.mission(missionId))
+  }
 
-                    {status === 'locked' && (
-                      <div className="flex items-center justify-center text-xs font-semibold text-gray-500 pt-2 border-t border-gray-700/20 gap-1">
-                        <Lock className="w-3 h-3" />
-                        <span>Terkunci</span>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-              )
-            })}
-          </div>
-        </div>
+  // Handle claim voucher
+  const handleClaimVoucher = () => {
+    router.push(PAGE_ROUTES.success)
+  }
 
-        {/* Bottom Action Button */}
-        <div className="pb-6">
-          <Button
-            onClick={() => router.push('/progress')}
-            className="w-full h-14 bg-gradient-to-r from-orange-600 to-red-600 hover:from-orange-700 hover:to-red-700 text-white font-bold shadow-lg shadow-orange-500/30 transform transition-all duration-300 hover:scale-105"
-          >
-            <TrendingUp className="w-5 h-5 mr-2" />
-            Lihat Progress Detail
-          </Button>
-        </div>
+  // Handle logout
+  const handleLogout = () => {
+    logout()
+    router.push(PAGE_ROUTES.home)
+    toast({
+      title: "Berhasil Keluar",
+      description: "Sampai jumpa kembali!",
+    })
+  }
 
-        {/* How to Play Section */}
-        <Card className="backdrop-blur-xl bg-gradient-to-br from-gray-900/60 to-purple-950/30 border-2 border-orange-500/20">
-          <CardContent className="p-5">
-            <button
-              onClick={() => setShowInstructions(!showInstructions)}
-              className="w-full flex items-center justify-between text-left"
-            >
-              <h3 className="text-lg font-bold bg-gradient-to-r from-orange-400 to-red-500 bg-clip-text text-transparent">
-                Cara Bermain
-              </h3>
-              {showInstructions ? (
-                <ChevronUp className="w-5 h-5 text-orange-400" />
-              ) : (
-                <ChevronDown className="w-5 h-5 text-orange-400" />
-              )}
-            </button>
-
-            {showInstructions && (
-              <div className="mt-4 space-y-3 text-sm text-text-light animate-fade-in">
-                <div className="flex items-start gap-3 p-3 bg-orange-900/10 rounded-lg border border-orange-500/20">
-                  <div className="bg-gradient-to-br from-orange-500 to-red-600 text-white font-bold w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg">
-                    1
-                  </div>
-                  <p>Pilih lokasi yang tersedia (berwarna oranye)</p>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 bg-orange-900/10 rounded-lg border border-orange-500/20">
-                  <div className="bg-gradient-to-br from-orange-500 to-red-600 text-white font-bold w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg">
-                    2
-                  </div>
-                  <p>Scan QR code yang ada di lokasi tersebut</p>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 bg-orange-900/10 rounded-lg border border-orange-500/20">
-                  <div className="bg-gradient-to-br from-orange-500 to-red-600 text-white font-bold w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg">
-                    3
-                  </div>
-                  <p>Ambil foto selfie di lokasi tersebut</p>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 bg-orange-900/10 rounded-lg border border-orange-500/20">
-                  <div className="bg-gradient-to-br from-orange-500 to-red-600 text-white font-bold w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 shadow-lg">
-                    4
-                  </div>
-                  <p>Jawab pertanyaan quiz untuk membuka lokasi berikutnya</p>
-                </div>
-
-                <div className="flex items-start gap-3 p-3 bg-green-900/10 rounded-lg border border-green-500/20 mt-4">
-                  <Trophy className="w-7 h-7 text-green-400 flex-shrink-0" />
-                  <p className="text-green-300">
-                    Selesaikan semua lokasi untuk mendapatkan hadiah voucher Rp 250.000
-                  </p>
-                </div>
-              </div>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Footer Info */}
-        <div className="text-center py-6 space-y-2">
-          <div className="flex items-center justify-center gap-2 text-xs text-text-muted">
-            <span>🎃</span>
-            <span>Supermal Karawaci Halloween Event</span>
-            <span>🎃</span>
-          </div>
+  // Loading state
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f0f] to-[#0a0a0f] flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-christmas-red/30 border-t-christmas-red rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-white">Memuat dashboard...</p>
         </div>
       </div>
+    )
+  }
+
+  // Error state
+  if (error) {
+    return (
+      <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f0f] to-[#0a0a0f] flex items-center justify-center p-4">
+        <Card variant="christmas" className="max-w-md w-full">
+          <CardContent className="p-6 text-center">
+            <AlertCircle className="w-12 h-12 text-christmas-red mx-auto mb-4" />
+            <h2 className="text-lg font-bold text-white mb-2">Terjadi Kesalahan</h2>
+            <p className="text-gray-400 text-sm mb-4">{error}</p>
+            <div className="flex gap-3">
+              <Button onClick={refresh} variant="outline" className="flex-1">
+                <RefreshCw className="w-4 h-4 mr-2" />
+                Coba Lagi
+              </Button>
+              <Button onClick={handleLogout} variant="ghost" className="flex-1">
+                Keluar
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-[#0a0a0f] via-[#1a0f0f] to-[#0a0a0f]">
+      {/* Ambient background */}
+      <div className="fixed inset-0 pointer-events-none">
+        <div className="absolute top-0 left-1/4 w-96 h-96 bg-christmas-red/10 rounded-full blur-[100px]" />
+        <div className="absolute bottom-0 right-1/4 w-96 h-96 bg-christmas-green/10 rounded-full blur-[100px]" />
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 bg-christmas-gold/5 rounded-full blur-[80px]" />
+      </div>
+
+      {/* Header */}
+      <Header
+        title="Shopping Journey"
+        subtitle={session?.full_name}
+        action={
+          quota && (
+            <QuotaDisplay remaining={quota.remaining} total={quota.total} />
+          )
+        }
+      />
+
+      {/* Content */}
+      <main className="relative z-10 p-4 pb-24 max-w-lg mx-auto">
+        <motion.div
+          initial="initial"
+          animate="animate"
+          variants={staggerContainer}
+          className="space-y-6"
+        >
+          {/* Welcome & Progress */}
+          <motion.div variants={fadeInUp}>
+            <Card variant="glass">
+              <CardContent className="p-5">
+                <div className="flex items-center justify-between mb-4">
+                  <div>
+                    <h2 className="text-lg font-bold text-white">
+                      Halo, {session?.full_name?.split(" ")[0]}! 👋
+                    </h2>
+                    <p className="text-sm text-gray-400">
+                      {allMissionsComplete
+                        ? "Semua misi selesai!"
+                        : `Selesaikan ${2 - completedCount} misi lagi`}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <div className="text-2xl font-bold text-christmas-gold">
+                      {completedCount}/2
+                    </div>
+                    <p className="text-xs text-gray-500">Misi Selesai</p>
+                  </div>
+                </div>
+
+                {/* Progress bar */}
+                <div className="space-y-2">
+                  <div className="flex justify-between text-xs text-gray-500">
+                    <span>Progress</span>
+                    <span>{Math.round(progressPercentage)}%</span>
+                  </div>
+                  <SegmentedProgressBar
+                    current={completedCount}
+                    total={2}
+                  />
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* All Missions Complete - Celebration */}
+          <AnimatePresence>
+            {allMissionsComplete && (
+              <motion.div
+                variants={fadeInUp}
+                initial="initial"
+                animate="animate"
+                exit="exit"
+              >
+                <Card variant="gold">
+                  <CardContent className="p-0">
+                    <SuccessCelebration onClaim={handleClaimVoucher} />
+                  </CardContent>
+                </Card>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Mission Cards */}
+          {!allMissionsComplete && (
+            <motion.div variants={fadeInUp} className="space-y-4">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-5 h-5 text-christmas-gold" />
+                <h3 className="text-lg font-bold text-white">Misi Belanja</h3>
+              </div>
+
+              {missions.map((mission, index) => {
+                // Mission 2 is locked until Mission 1 is complete
+                // Actually, for this event, both missions can be done in any order
+                // But we'll keep them both available
+                const isLocked = false
+
+                return (
+                  <MissionCard
+                    key={mission.id}
+                    mission={mission}
+                    index={index}
+                    isLocked={isLocked}
+                    onStart={() => handleStartMission(mission.id)}
+                  />
+                )
+              })}
+            </motion.div>
+          )}
+
+          {/* Voucher info */}
+          <motion.div variants={fadeInUp}>
+            <Card variant="christmas" className="border-dashed">
+              <CardContent className="p-4">
+                <div className="flex items-center gap-3">
+                  <div className="p-2 bg-christmas-gold/20 rounded-xl">
+                    <Gift className="w-6 h-6 text-christmas-gold" />
+                  </div>
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-white">
+                      Hadiah Menanti!
+                    </p>
+                    <p className="text-xs text-gray-400">
+                      Selesaikan 2 misi untuk mendapatkan voucher{" "}
+                      <span className="text-christmas-gold font-semibold">
+                        {formatRupiah(EVENT_CONFIG.voucherAmount)}
+                      </span>
+                    </p>
+                  </div>
+                </div>
+              </CardContent>
+            </Card>
+          </motion.div>
+
+          {/* Event info */}
+          <motion.div variants={fadeInUp}>
+            <div className="flex flex-wrap justify-center gap-x-4 gap-y-2 text-xs text-gray-500">
+              <div className="flex items-center gap-1">
+                <Clock className="w-3 h-3" />
+                <span>
+                  {EVENT_CONFIG.startTime} - {EVENT_CONFIG.endTime} WIB
+                </span>
+              </div>
+              <div className="flex items-center gap-1">
+                <Gift className="w-3 h-3" />
+                <span>
+                  Sisa {quota?.remaining ?? "..."}/{quota?.total ?? 100} voucher
+                </span>
+              </div>
+            </div>
+          </motion.div>
+        </motion.div>
+      </main>
     </div>
   )
 }

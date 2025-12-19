@@ -1,9 +1,11 @@
+// components/ui/checkbox.tsx
+// Created: Checkbox component with Christmas styling
+
 "use client"
 
 import * as React from "react"
 import * as CheckboxPrimitive from "@radix-ui/react-checkbox"
 import { Check } from "lucide-react"
-
 import { cn } from "@/lib/utils"
 
 const Checkbox = React.forwardRef<
@@ -13,7 +15,11 @@ const Checkbox = React.forwardRef<
   <CheckboxPrimitive.Root
     ref={ref}
     className={cn(
-      "peer h-4 w-4 shrink-0 rounded-sm border border-primary ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50 data-[state=checked]:bg-primary data-[state=checked]:text-primary-foreground",
+      "peer h-5 w-5 shrink-0 rounded-md border-2 border-gray-600 bg-gray-900/50 ring-offset-background transition-all duration-200",
+      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-christmas-red/50 focus-visible:ring-offset-2 focus-visible:ring-offset-primary",
+      "disabled:cursor-not-allowed disabled:opacity-50",
+      "hover:border-christmas-red/50",
+      "data-[state=checked]:border-christmas-red data-[state=checked]:bg-christmas-red data-[state=checked]:text-white",
       className
     )}
     {...props}
@@ -21,7 +27,7 @@ const Checkbox = React.forwardRef<
     <CheckboxPrimitive.Indicator
       className={cn("flex items-center justify-center text-current")}
     >
-      <Check className="h-4 w-4" />
+      <Check className="h-3.5 w-3.5 stroke-[3]" />
     </CheckboxPrimitive.Indicator>
   </CheckboxPrimitive.Root>
 ))

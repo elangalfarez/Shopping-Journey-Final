@@ -1,20 +1,35 @@
-import * as React from "react"
+// components/ui/card.tsx
+// Created: Card component with glassmorphism Christmas variants
 
+import * as React from "react"
 import { cn } from "@/lib/utils"
 
 const Card = React.forwardRef<
   HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
->(({ className, ...props }, ref) => (
-  <div
-    ref={ref}
-    className={cn(
-      "rounded-lg border bg-card text-card-foreground shadow-sm",
-      className
-    )}
-    {...props}
-  />
-))
+  React.HTMLAttributes<HTMLDivElement> & {
+    variant?: "default" | "glass" | "christmas" | "success" | "gold"
+  }
+>(({ className, variant = "default", ...props }, ref) => {
+  const variants = {
+    default: "bg-card text-card-foreground border border-border",
+    glass: "backdrop-blur-xl bg-gradient-to-br from-gray-900/80 via-gray-950/60 to-gray-900/80 border-2 border-white/10 shadow-2xl",
+    christmas: "backdrop-blur-xl bg-gradient-to-br from-gray-900/80 via-red-950/20 to-gray-900/80 border-2 border-christmas-red/30 shadow-2xl shadow-christmas-red/10",
+    success: "backdrop-blur-xl bg-gradient-to-br from-gray-900/80 via-green-950/20 to-gray-900/80 border-2 border-christmas-green/30 shadow-2xl shadow-christmas-green/10",
+    gold: "backdrop-blur-xl bg-gradient-to-br from-gray-900/80 via-amber-950/20 to-gray-900/80 border-2 border-christmas-gold/30 shadow-2xl shadow-christmas-gold/10",
+  }
+
+  return (
+    <div
+      ref={ref}
+      className={cn(
+        "rounded-2xl transition-all duration-300",
+        variants[variant],
+        className
+      )}
+      {...props}
+    />
+  )
+})
 Card.displayName = "Card"
 
 const CardHeader = React.forwardRef<
@@ -30,13 +45,13 @@ const CardHeader = React.forwardRef<
 CardHeader.displayName = "CardHeader"
 
 const CardTitle = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
+  HTMLParagraphElement,
+  React.HTMLAttributes<HTMLHeadingElement>
 >(({ className, ...props }, ref) => (
-  <div
+  <h3
     ref={ref}
     className={cn(
-      "text-2xl font-semibold leading-none tracking-tight",
+      "text-2xl font-bold leading-none tracking-tight",
       className
     )}
     {...props}
@@ -45,10 +60,10 @@ const CardTitle = React.forwardRef<
 CardTitle.displayName = "CardTitle"
 
 const CardDescription = React.forwardRef<
-  HTMLDivElement,
-  React.HTMLAttributes<HTMLDivElement>
+  HTMLParagraphElement,
+  React.HTMLAttributes<HTMLParagraphElement>
 >(({ className, ...props }, ref) => (
-  <div
+  <p
     ref={ref}
     className={cn("text-sm text-muted-foreground", className)}
     {...props}
