@@ -387,32 +387,41 @@ function ValidationResults({
             className="space-y-4"
         >
             {/* Result header */}
-            <Card variant={isValid ? "success" : "christmas"}>
+            <Card variant={isValid ? "success" : "glass"}>
                 <CardContent className="p-5">
                     <div className="flex items-center gap-4">
                         <div
-                            className={`w-14 h-14 rounded-full flex items-center justify-center ${isValid ? "bg-christmas-green" : "bg-christmas-red/30"
+                            className={`w-14 h-14 rounded-full flex items-center justify-center ${isValid ? "bg-christmas-green" : "bg-christmas-gold/20"
                                 }`}
                         >
                             {isValid ? (
                                 <CheckCircle className="w-8 h-8 text-white" />
                             ) : (
-                                <FileWarning className="w-8 h-8 text-christmas-red" />
+                                <Receipt className="w-8 h-8 text-christmas-gold" />
                             )}
                         </div>
-                        <div>
+                        <div className="flex-1">
                             <h3 className="text-lg font-bold text-white">
-                                {isValid ? "Struk Valid!" : "Struk Tidak Valid"}
+                                {isValid ? "Struk Valid!" : "Hasil Pemindaian"}
                             </h3>
                             <p className="text-sm text-gray-400">
                                 {isValid
                                     ? "Semua ketentuan terpenuhi"
-                                    : `${errors.length} ketentuan tidak terpenuhi`}
+                                    : "Silakan lanjutkan untuk verifikasi manual"}
                             </p>
                         </div>
                     </div>
                 </CardContent>
             </Card>
+
+            {/* OCR notice for non-perfect scans */}
+            {!isValid && (
+                <div className="bg-christmas-gold/10 border border-christmas-gold/30 rounded-xl p-4">
+                    <p className="text-sm text-christmas-gold">
+                        💡 Sistem OCR tidak dapat membaca struk dengan sempurna. Langsung ajukan struk Anda dan tim kami akan melakukan verifikasi manual.
+                    </p>
+                </div>
+            )}
 
             {/* Extracted data */}
             <Card variant="glass">
@@ -428,14 +437,14 @@ function ValidationResults({
                                 key={index}
                                 className={`flex items-center justify-between p-3 rounded-xl ${item.isValid
                                         ? "bg-christmas-green/10 border border-christmas-green/30"
-                                        : "bg-christmas-red/10 border border-christmas-red/30"
+                                        : "bg-gray-800/50 border border-gray-700/50"
                                     }`}
                             >
                                 <div className="flex items-center gap-3">
                                     {item.isValid ? (
                                         <CheckCircle className="w-5 h-5 text-christmas-green" />
                                     ) : (
-                                        <XCircle className="w-5 h-5 text-christmas-red" />
+                                        <AlertCircle className="w-5 h-5 text-gray-500" />
                                     )}
                                     <div>
                                         <p className="text-sm font-medium text-white">{item.label}</p>
@@ -444,7 +453,7 @@ function ValidationResults({
                                 </div>
                                 <div className="text-right">
                                     <p
-                                        className={`text-sm font-bold ${item.isValid ? "text-christmas-green" : "text-christmas-red"
+                                        className={`text-sm font-bold ${item.isValid ? "text-christmas-green" : "text-gray-400"
                                             }`}
                                     >
                                         {item.value || "Tidak terdeteksi"}
@@ -463,7 +472,7 @@ function ValidationResults({
                                         ? "text-christmas-green"
                                         : ocrData.confidence >= 40
                                             ? "text-christmas-gold"
-                                            : "text-christmas-red"
+                                            : "text-gray-400"
                                     }`}
                             >
                                 {ocrData.confidence}%
@@ -473,23 +482,6 @@ function ValidationResults({
                 </CardContent>
             </Card>
 
-            {/* Error messages */}
-            {errors.length > 0 && (
-                <div className="bg-christmas-red/10 border border-christmas-red/30 rounded-xl p-4">
-                    <p className="text-sm font-medium text-christmas-red mb-2">
-                        Ketentuan yang tidak terpenuhi:
-                    </p>
-                    <ul className="text-xs text-gray-400 space-y-1">
-                        {errors.map((error, index) => (
-                            <li key={index} className="flex items-start gap-2">
-                                <XCircle className="w-3 h-3 text-christmas-red mt-0.5 flex-shrink-0" />
-                                {error}
-                            </li>
-                        ))}
-                    </ul>
-                </div>
-            )}
-
             {/* Action buttons */}
             <div className="flex gap-3">
                 <Button onClick={onRetry} variant="outline" className="flex-1">
@@ -497,34 +489,23 @@ function ValidationResults({
                     Foto Ulang
                 </Button>
 
-                {isValid ? (
-                    <Button
-                        onClick={onSubmit}
-                        loading={isSubmitting}
-                        className="flex-1"
-                        variant={missionConfig.id === 1 ? "default" : "secondary"}
-                    >
-                        {isSubmitting ? "Menyimpan..." : "Selesaikan Misi"}
-                        <ChevronRight className="w-4 h-4 ml-1" />
-                    </Button>
-                ) : (
-                    <Button
-                        onClick={onSubmit}
-                        variant="outline"
-                        className="flex-1 border-christmas-gold/50 text-christmas-gold hover:bg-christmas-gold/10"
-                        disabled={isSubmitting}
-                    >
-                        Ajukan Tetap
-                    </Button>
-                )}
+                <Button
+                    onClick={onSubmit}
+                    loading={isSubmitting}
+                    className="flex-1"
+                    variant={missionConfig.id === 1 ? "default" : "secondary"}
+                >
+                    {isSubmitting ? "Menyimpan..." : isValid ? "Selesaikan Misi" : "Ajukan Struk"}
+                    <ChevronRight className="w-4 h-4 ml-1" />
+                </Button>
             </div>
 
-            {/* Manual review notice for invalid receipts */}
-            {!isValid && (
-                <p className="text-xs text-gray-500 text-center">
-                    Struk yang tidak memenuhi ketentuan akan ditinjau manual oleh panitia
-                </p>
-            )}
+            {/* Manual review notice */}
+            <p className="text-xs text-gray-500 text-center">
+                {isValid
+                    ? "Struk Anda memenuhi ketentuan dan siap diproses"
+                    : "Tim kami akan memverifikasi struk Anda secara manual"}
+            </p>
         </motion.div>
     )
 }
