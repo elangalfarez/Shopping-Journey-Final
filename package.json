@@ -20,6 +20,7 @@
     "@radix-ui/react-label": "latest",
     "@radix-ui/react-popover": "latest",
     "@radix-ui/react-progress": "latest",
+    "@radix-ui/react-scroll-area": "^1.2.10",
     "@radix-ui/react-select": "latest",
     "@radix-ui/react-separator": "latest",
     "@radix-ui/react-slot": "latest",

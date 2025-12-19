@@ -29,7 +29,7 @@ export default function TermsPage() {
         "Peserta wajib mengunggah foto struk yang jelas dan dapat dibaca. Struk yang buram atau tidak terbaca akan ditolak.",
         "Setiap struk hanya dapat digunakan untuk satu misi. Struk yang sama tidak dapat digunakan untuk kedua misi.",
         "Peserta yang telah menyelesaikan kedua misi akan mendapatkan kode QR unik untuk penukaran voucher.",
-        "Voucher senilai Rp 100.000 dapat ditukarkan di CS Counter eCenter dengan menunjukkan kode QR dari aplikasi.",
+        "Voucher senilai Rp 100.000 dapat ditukarkan di Counter CS VIP dengan menunjukkan kode QR dari aplikasi.",
         "Penukaran voucher hanya dapat dilakukan pada tanggal 20 Desember 2025 pukul 20.00 - 00.00 WIB.",
         "Voucher tidak dapat ditukarkan dengan uang tunai dan tidak dapat digabungkan dengan promo lainnya.",
         "Satu peserta hanya berhak mendapatkan satu voucher.",

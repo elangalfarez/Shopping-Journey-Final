@@ -13,7 +13,7 @@ export const EVENT_CONFIG = {
     startTime: '20:00',
     endTime: '00:00',
     location: 'Supermal Karawaci',
-    redemptionLocation: 'CS Counter eCenter',
+    redemptionLocation: 'Counter CS VIP',
     totalQuota: 100,
     voucherAmount: 100000,
 }
@@ -171,24 +171,30 @@ export const STORAGE_KEYS = {
 }
 
 // ===========================================
+// BASE PATH (must match next.config.ts basePath)
+// ===========================================
+
+export const BASE_PATH = '/shopping-journey'
+
+// ===========================================
 // API ROUTES
 // ===========================================
 
 export const API_ROUTES = {
     // Public endpoints
-    quota: '/api/quota',
-    register: '/api/register',
-    participant: '/api/participant',
-    mission: '/api/mission',
-    uploadReceipt: '/api/upload-receipt',
-    ocr: '/api/ocr',
-    health: '/api/health',
+    quota: `${BASE_PATH}/api/quota`,
+    register: `${BASE_PATH}/api/register`,
+    participant: `${BASE_PATH}/api/participant`,
+    mission: `${BASE_PATH}/api/mission`,
+    uploadReceipt: `${BASE_PATH}/api/upload-receipt`,
+    ocr: `${BASE_PATH}/api/ocr`,
+    health: `${BASE_PATH}/api/health`,
 
     // Admin endpoints
-    adminLogin: '/api/admin/login',
-    adminStats: '/api/admin/stats',
-    adminParticipants: '/api/admin/participants',
-    adminRedeem: '/api/admin/redeem',
+    adminLogin: `${BASE_PATH}/api/admin/login`,
+    adminStats: `${BASE_PATH}/api/admin/stats`,
+    adminParticipants: `${BASE_PATH}/api/admin/participants`,
+    adminRedeem: `${BASE_PATH}/api/admin/redeem`,
 }
 
 // ===========================================

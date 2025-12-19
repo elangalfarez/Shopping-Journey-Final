@@ -33,6 +33,7 @@ import { Badge } from "@/components/ui/badge"
 import { useToast } from "@/components/ui/use-toast"
 import { StepProgress } from "@/components/ui/segmented-progress"
 import { QuotaDisplay } from "@/components/Header"
+import { TermsModal } from "@/components/TermsModal"
 
 import { useQuota } from "@/hooks/useQuota"
 import { registerParticipant, getParticipantByPhone } from "@/lib/supabase"
@@ -109,6 +110,9 @@ export default function HomePage() {
   const [showRecovery, setShowRecovery] = useState(false)
   const [recoveryPhone, setRecoveryPhone] = useState("")
   const [recoveryLoading, setRecoveryLoading] = useState(false)
+
+  // Terms modal state
+  const [showTermsModal, setShowTermsModal] = useState(false)
 
   // Check for existing session on mount
   useEffect(() => {
@@ -589,14 +593,16 @@ export default function HomePage() {
                                 className="text-sm text-gray-300 cursor-pointer"
                               >
                                 Saya menyetujui{" "}
-                                <a
-                                  href={PAGE_ROUTES.terms}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="text-christmas-gold hover:underline"
+                                <button
+                                  type="button"
+                                  onClick={(e) => {
+                                    e.preventDefault()
+                                    setShowTermsModal(true)
+                                  }}
+                                  className="text-christmas-gold hover:underline font-medium"
                                 >
                                   Syarat & Ketentuan
-                                </a>
+                                </button>
                                 {" "}yang berlaku
                               </label>
                             </div>
@@ -781,6 +787,13 @@ export default function HomePage() {
           </p>
         </footer>
       </div>
+
+      {/* Terms Modal */}
+      <TermsModal
+        open={showTermsModal}
+        onOpenChange={setShowTermsModal}
+        onAgree={() => handleInputChange("acceptTerms", true)}
+      />
     </div>
   )
 }

@@ -15,7 +15,7 @@ import { Card, CardContent } from "@/components/ui/card"
 import { useToast } from "@/components/ui/use-toast"
 
 import { setLocalStorage, getLocalStorage } from "@/lib/utils"
-import { STORAGE_KEYS } from "@/lib/constants"
+import { STORAGE_KEYS, API_ROUTES } from "@/lib/constants"
 
 // ===========================================
 // ANIMATION VARIANTS
@@ -60,7 +60,7 @@ export default function AdminLoginPage() {
 
         try {
             // Call admin login API
-            const response = await fetch("/api/admin/login", {
+            const response = await fetch(API_ROUTES.adminLogin, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ password }),
