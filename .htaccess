@@ -1,0 +1,31 @@
+# .htaccess for Next.js on cPanel with Node.js
+
+# Disable directory listing
+Options -Indexes
+
+# Force correct MIME types
+<IfModule mod_mime.c>
+    AddType text/css .css
+    AddType application/javascript .js .mjs
+    AddType application/json .json .webmanifest
+    AddType image/svg+xml .svg
+    AddType font/woff .woff
+    AddType font/woff2 .woff2
+    AddType font/ttf .ttf
+    AddType font/otf .otf
+    AddType image/webp .webp
+</IfModule>
+
+# Enable rewrite engine
+RewriteEngine On
+
+# LiteSpeed specific settings
+<IfModule LiteSpeed>
+    RewriteRule .* - [E=noabort:1,E=noconntimeout:1]
+</IfModule>
+
+# Pass all requests to Node.js application
+# The Passenger module handles routing to Node.js
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^(.*)$ - [L,E=HTTP_AUTHORIZATION:%{HTTP:Authorization}]
